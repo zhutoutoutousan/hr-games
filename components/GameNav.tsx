@@ -12,7 +12,7 @@ export function GameNav() {
 
   const games = [
     { path: '/', icon: Home, label: 'Home' },
-    { path: '/games/cv', icon: FileText, label: 'CV Game' },
+    { path: '/games/true-false-cv', icon: FileText, label: 'CV Game' },
     { path: '/games/matching', icon: Users, label: 'Matching' },
     { path: '/games/story', icon: MessageSquare, label: 'Story' },
   ];
