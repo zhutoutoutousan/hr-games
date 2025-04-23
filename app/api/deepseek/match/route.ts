@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { generateResponse } from '@/lib/deepseek';
 
 interface Person {
   id: number;
@@ -6,102 +7,147 @@ interface Person {
   gender: string;
   industry: string;
   position: string;
-  hobby: string;
+  hobbies: string;
   favoriteFood: string;
   leastFavoriteFood: string;
   hrConcern: string;
   weekendActivity: string;
   socialPreference: string;
+  avatarRequest: string;
 }
+
+interface MatchRequest {
+  userData: Person;
+}
+
+const MATCHING_SYSTEM_MESSAGE = `You are a professional HR consultant analyzing the compatibility between two people based on their profiles.
+Your task is to evaluate how well these two people would match based on their professional backgrounds, interests, and preferences.
+Consider factors like:
+1. Professional compatibility (industry, position)
+2. Personal interests alignment (hobbies, food preferences)
+3. Work-life balance preferences (weekend activities)
+4. Social interaction styles
+5. HR concerns and interests
+
+Respond with a JSON object containing:
+{
+  "score": number (0-100),
+  "reasoning": string (brief explanation of the match)
+}`;
 
 export async function POST(request: Request) {
   try {
-    const { person1, person2 } = await request.json();
+    const { userData } = await request.json() as MatchRequest;
 
-    // Calculate basic match score
-    let matchScore = 0;
-    const fields: (keyof Person)[] = [
-      'industry',
-      'position',
-      'hobby',
-      'favoriteFood',
-      'leastFavoriteFood',
-      'hrConcern',
-      'weekendActivity',
-      'socialPreference'
-    ];
+    if (!userData) {
+      return NextResponse.json(
+        { error: 'Missing required data' },
+        { status: 400 }
+      );
+    }
 
-    fields.forEach(field => {
-      if (person1[field] === person2[field]) {
-        matchScore += 1;
-      }
-    });
+    // Fetch candidates from people API
+    const peopleResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/people`);
+    if (!peopleResponse.ok) {
+      throw new Error('Failed to fetch candidates');
+    }
 
-    // Use DeepSeek API to analyze compatibility
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a professional HR consultant analyzing the compatibility between two people based on their profiles.'
-          },
-          {
-            role: 'user',
-            content: `Analyze the compatibility between these two people:
-            
-            Person 1:
-            - Name: ${person1.name}
-            - Industry: ${person1.industry}
-            - Position: ${person1.position}
-            - Hobby: ${person1.hobby}
-            - Favorite Food: ${person1.favoriteFood}
-            - Least Favorite Food: ${person1.leastFavoriteFood}
-            - HR Concern: ${person1.hrConcern}
-            - Weekend Activity: ${person1.weekendActivity}
-            - Social Preference: ${person1.socialPreference}
+    const candidates: Person[] = [];
+    const reader = peopleResponse.body?.getReader();
+    const decoder = new TextDecoder();
 
-            Person 2:
-            - Name: ${person2.name}
-            - Industry: ${person2.industry}
-            - Position: ${person2.position}
-            - Hobby: ${person2.hobby}
-            - Favorite Food: ${person2.favoriteFood}
-            - Least Favorite Food: ${person2.leastFavoriteFood}
-            - HR Concern: ${person2.hrConcern}
-            - Weekend Activity: ${person2.weekendActivity}
-            - Social Preference: ${person2.socialPreference}
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-            Based on their profiles, would they be a good match? Consider their:
-            1. Professional compatibility
-            2. Personal interests alignment
-            3. Work-life balance preferences
-            4. Social interaction styles
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
 
-            Respond with a JSON object containing:
-            {
-              "isMatch": boolean,
-              "score": number (0-100),
-              "reasoning": string
-            }`
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'person') {
+              // Skip the current user from candidates
+              if (data.data.name !== userData.name) {
+                candidates.push(data.data);
+              }
+            }
           }
-        ]
-      })
-    });
+        }
+      }
+    }
 
-    const data = await response.json();
-    const analysis = JSON.parse(data.choices[0].message.content);
+    if (candidates.length === 0) {
+      return NextResponse.json(
+        { error: 'No candidates found' },
+        { status: 404 }
+      );
+    }
+
+    // Calculate matches for each candidate using DeepSeek
+    const matches = await Promise.all(candidates.map(async (candidate) => {
+      const prompt = `Analyze the compatibility between these two people:
+      
+      Person 1 (User):
+      - Name: ${userData.name}
+      - Industry: ${userData.industry}
+      - Position: ${userData.position}
+      - Hobbies: ${userData.hobbies}
+      - Favorite Food: ${userData.favoriteFood}
+      - Least Favorite Food: ${userData.leastFavoriteFood}
+      - HR Concern: ${userData.hrConcern}
+      - Weekend Activity: ${userData.weekendActivity}
+      - Social Preference: ${userData.socialPreference}
+
+      Person 2 (Candidate):
+      - Name: ${candidate.name}
+      - Industry: ${candidate.industry}
+      - Position: ${candidate.position}
+      - Hobbies: ${candidate.hobbies}
+      - Favorite Food: ${candidate.favoriteFood}
+      - Least Favorite Food: ${candidate.leastFavoriteFood}
+      - HR Concern: ${candidate.hrConcern}
+      - Weekend Activity: ${candidate.weekendActivity}
+      - Social Preference: ${candidate.socialPreference}
+
+      Please analyze their compatibility and provide a match score and reasoning.`;
+
+      try {
+        const response = await generateResponse(prompt, MATCHING_SYSTEM_MESSAGE);
+        let analysis;
+        try {
+          // First try to parse the response directly
+          analysis = JSON.parse(response);
+        } catch (parseError) {
+          // If that fails, try cleaning the response
+          const cleanResponse = response.replace(/```json\n?|\n?```/g, '').trim();
+          analysis = JSON.parse(cleanResponse);
+        }
+
+        return {
+          id: candidate.id,
+          match_score: analysis.score,
+          reasoning: analysis.reasoning,
+          person: candidate
+        };
+      } catch (error) {
+        console.error(`Error analyzing match for candidate ${candidate.id}:`, error);
+        // Fallback to basic scoring if DeepSeek fails
+        return {
+          id: candidate.id,
+          match_score: 50, // Default score
+          reasoning: "Unable to analyze match at this time",
+          person: candidate
+        };
+      }
+    }));
+
+    // Sort matches by score
+    const sortedMatches = matches.sort((a, b) => b.match_score - a.match_score);
 
     return NextResponse.json({
-      isMatch: analysis.isMatch,
-      score: analysis.score,
-      reasoning: analysis.reasoning,
-      basicMatchScore: matchScore
+      matches: sortedMatches
     });
   } catch (error) {
     console.error('Error in match verification:', error);
@@ -110,4 +156,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-} 
+}

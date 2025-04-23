@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import MatchingGame from '@/components/MatchingGame';
+import { SocialMatchingInterface } from '@/components/social-matching-interface';
 import { GameNav } from '@/components/GameNav';
 
 export default function MatchingGamePage() {
@@ -62,7 +62,7 @@ export default function MatchingGamePage() {
 
   return (
     <div className="min-h-screen">
-      <MatchingGame onComplete={handleComplete} />
+      <SocialMatchingInterface />
       <GameNav />
     </div>
   );

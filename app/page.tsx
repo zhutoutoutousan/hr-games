@@ -55,7 +55,7 @@ export default function Home() {
       <main className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
         <div className="grid grid-cols-3 gap-8 max-w-7xl w-full">
           <button
-            onClick={() => router.push('/games/cv')}
+            onClick={() => router.push('/games/true-false-cv')}
             className="group flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-6"
           >
             <div className="h-24 w-24 bg-[#0065f0]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
