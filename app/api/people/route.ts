@@ -67,7 +67,7 @@ export async function GET() {
 
           const personData = {
             id,
-            name: formData.姓名,
+            name: formData["我们如何称呼您？"],
             gender: formData.性别,
             industry: formData["您所在行业是？"],
             position: formData["您的职位"],
