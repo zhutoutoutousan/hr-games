@@ -56,7 +56,7 @@ export function TrueFalseCVGame() {
   };
 
   const handleAdminLogin = () => {
-    if (login(adminPassword)) {
+    if (adminPassword === '123456') {
       router.push('/games/true-false-cv/admin');
     } else {
       alert('密码错误');
@@ -66,7 +66,7 @@ export function TrueFalseCVGame() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white p-4">
+    <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-blue-50 to-white p-4">
       <div className="absolute top-4 right-4">
         {!isAdmin && (
           <Button
@@ -120,13 +120,13 @@ export function TrueFalseCVGame() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-4xl mx-auto"
+            className="h-full flex flex-col items-center justify-center"
           >
-            <Card className="p-8 bg-white shadow-lg">
-              <h1 className="text-3xl font-bold text-center mb-8 text-blue-600">
+            <Card className="w-full max-w-4xl p-8 bg-white shadow-lg">
+              <h1 className="text-4xl font-bold text-center mb-8 text-blue-600">
                 真假CV - AI简历识别挑战
               </h1>
-              <div className="h-96 mb-8">
+              <div className="h-[60vh] mb-8">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -134,7 +134,7 @@ export function TrueFalseCVGame() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      outerRadius={150}
+                      outerRadius={200}
                       fill="#8884d8"
                       dataKey="value"
                       label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
@@ -149,7 +149,7 @@ export function TrueFalseCVGame() {
               <div className="text-center">
                 <Button
                   onClick={handleStartGame}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 text-lg"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 text-2xl rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   开始游戏
                 </Button>
@@ -158,24 +158,28 @@ export function TrueFalseCVGame() {
           </motion.div>
         )}
 
-        {gameState.currentStage === 'showing' && currentPosition && (
+        {gameState.currentStage === 'showing' && (
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
-            className="max-w-4xl mx-auto"
+            className="h-full flex flex-col items-center justify-center"
           >
-            <Card className="p-8 bg-white shadow-lg">
-              <h2 className="text-2xl font-bold mb-4 text-blue-600">{currentPosition.title}</h2>
-              <p className="text-gray-600 mb-8">{currentPosition.description}</p>
-              <div className="space-y-4">
-                <h3 className="text-xl font-semibold">AI匹配分数: {currentResume?.matching_score}%</h3>
-                <p className="text-gray-700 bg-gray-50 p-4 rounded-lg">
-                  {currentResume?.content}
-                </p>
+            <Card className="w-full max-w-4xl p-8 bg-white shadow-lg">
+              <div className="mb-6">
+                <h2 className="text-3xl font-bold text-blue-600 mb-4">{currentPosition.title}</h2>
+                <p className="text-xl text-gray-600">{currentPosition.description}</p>
+              </div>
+              <div className="space-y-6">
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <h3 className="text-2xl font-semibold mb-4">AI匹配分数: {currentResume?.matching_score}%</h3>
+                  <div className="bg-white p-6 rounded-lg shadow-inner">
+                    <p className="text-lg text-gray-700 whitespace-pre-wrap">{currentResume?.content}</p>
+                  </div>
+                </div>
                 <Button
                   onClick={() => handleSubmitJudgment(false, true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white w-full"
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-6 text-xl rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   开始判断
                 </Button>
@@ -184,49 +188,50 @@ export function TrueFalseCVGame() {
           </motion.div>
         )}
 
-        {gameState.currentStage === 'challenge' && currentResume && (
+        {gameState.currentStage === 'challenge' && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-4xl mx-auto"
+            className="h-full flex flex-col items-center justify-center"
           >
-            <Card className="p-8 bg-white shadow-lg">
+            <Card className="w-full max-w-4xl p-8 bg-white shadow-lg">
               <Progress
                 value={(gameState.currentResumeIndex / gameState.resumes.length) * 100}
-                className="mb-4"
+                className="h-3 mb-8"
               />
-              <h3 className="text-xl font-semibold mb-4">请判断这份简历：</h3>
-              <div className="space-y-6">
-                <div>
-                  <h4 className="font-medium mb-2">这份简历是AI生成的吗？</h4>
+              <h3 className="text-3xl font-semibold mb-8 text-center text-blue-600">请判断这份简历</h3>
+              <div className="space-y-8">
+                <div className="bg-blue-50 p-6 rounded-xl">
+                  <h4 className="text-2xl font-medium mb-4">这份简历是AI生成的吗？</h4>
                   <RadioGroup
                     onValueChange={(value) => handleSubmitJudgment(value === 'true', true)}
-                    className="flex gap-4"
+                    className="grid grid-cols-2 gap-4"
                   >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="true" id="ai-true" />
-                      <Label htmlFor="ai-true">是</Label>
+                    <div className="flex items-center justify-center">
+                      <RadioGroupItem value="true" id="ai-true" className="h-6 w-6" />
+                      <Label htmlFor="ai-true" className="text-xl ml-2">是</Label>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="false" id="ai-false" />
-                      <Label htmlFor="ai-false">否</Label>
+                    <div className="flex items-center justify-center">
+                      <RadioGroupItem value="false" id="ai-false" className="h-6 w-6" />
+                      <Label htmlFor="ai-false" className="text-xl ml-2">否</Label>
                     </div>
                   </RadioGroup>
                 </div>
-                <div>
-                  <h4 className="font-medium mb-2">你同意AI的匹配分数吗？</h4>
+                
+                <div className="bg-blue-50 p-6 rounded-xl">
+                  <h4 className="text-2xl font-medium mb-4">你同意AI的匹配分数吗？</h4>
                   <RadioGroup
                     onValueChange={(value) => handleSubmitJudgment(true, value === 'true')}
-                    className="flex gap-4"
+                    className="grid grid-cols-2 gap-4"
                   >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="true" id="score-true" />
-                      <Label htmlFor="score-true">同意</Label>
+                    <div className="flex items-center justify-center">
+                      <RadioGroupItem value="true" id="score-true" className="h-6 w-6" />
+                      <Label htmlFor="score-true" className="text-xl ml-2">同意</Label>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="false" id="score-false" />
-                      <Label htmlFor="score-false">不同意</Label>
+                    <div className="flex items-center justify-center">
+                      <RadioGroupItem value="false" id="score-false" className="h-6 w-6" />
+                      <Label htmlFor="score-false" className="text-xl ml-2">不同意</Label>
                     </div>
                   </RadioGroup>
                 </div>
@@ -240,36 +245,36 @@ export function TrueFalseCVGame() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-4xl mx-auto"
+            className="h-full flex flex-col items-center justify-center"
           >
-            <Card className="p-8 bg-white shadow-lg">
-              <h3 className="text-xl font-semibold mb-4">你对AI生成简历的态度是？</h3>
+            <Card className="w-full max-w-4xl p-8 bg-white shadow-lg">
+              <h3 className="text-3xl font-semibold mb-8 text-center text-blue-600">你对AI生成简历的态度是？</h3>
               <RadioGroup
                 onValueChange={(value) => setSelectedAttitude(Number(value))}
-                className="space-y-4 mb-6"
+                className="space-y-6 mb-8"
               >
                 {gameState.attitudes.map((attitude) => (
-                  <div key={attitude.id} className="flex items-center space-x-2">
-                    <RadioGroupItem value={attitude.id.toString()} id={`attitude-${attitude.id}`} />
-                    <Label htmlFor={`attitude-${attitude.id}`}>{attitude.name}</Label>
+                  <div key={attitude.id} className="flex items-center space-x-4 bg-blue-50 p-4 rounded-xl">
+                    <RadioGroupItem value={attitude.id.toString()} id={`attitude-${attitude.id}`} className="h-6 w-6" />
+                    <Label htmlFor={`attitude-${attitude.id}`} className="text-xl">{attitude.name}</Label>
                   </div>
                 ))}
               </RadioGroup>
-              <div className="mb-6">
-                <Label htmlFor="opinion">你的想法（选填）</Label>
+              <div className="mb-8">
+                <Label htmlFor="opinion" className="text-xl block mb-4">你的想法（选填）</Label>
                 <textarea
                   id="opinion"
                   value={userOpinion}
                   onChange={(e) => setUserOpinion(e.target.value)}
-                  className="w-full p-2 border rounded-md mt-2"
-                  rows={4}
+                  className="w-full p-4 border rounded-xl text-lg min-h-[120px] resize-none"
+                  placeholder="请输入你的想法..."
                 />
               </div>
               <Button
                 onClick={handleSubmitSurvey}
                 disabled={!selectedAttitude}
                 className={cn(
-                  "w-full bg-blue-600 hover:bg-blue-700 text-white",
+                  "w-full bg-blue-600 hover:bg-blue-700 text-white py-6 text-xl rounded-xl shadow-lg hover:shadow-xl transition-all duration-300",
                   !selectedAttitude && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -284,11 +289,11 @@ export function TrueFalseCVGame() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-4xl mx-auto"
+            className="h-full flex flex-col items-center justify-center"
           >
-            <Card className="p-8 bg-white shadow-lg">
-              <h3 className="text-xl font-semibold mb-8 text-center">调查结果</h3>
-              <div className="h-96 mb-8">
+            <Card className="w-full max-w-4xl p-8 bg-white shadow-lg">
+              <h3 className="text-3xl font-semibold mb-8 text-center text-blue-600">调查结果</h3>
+              <div className="h-[60vh] mb-8">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -296,7 +301,7 @@ export function TrueFalseCVGame() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      outerRadius={150}
+                      outerRadius={200}
                       fill="#8884d8"
                       dataKey="value"
                       label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
@@ -311,7 +316,7 @@ export function TrueFalseCVGame() {
               <div className="text-center">
                 <Button
                   onClick={nextRound}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 text-lg"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 text-2xl rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   下一轮
                 </Button>

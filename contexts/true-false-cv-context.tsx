@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
 
 type GameStage = 'idle' | 'showing' | 'challenge' | 'survey' | 'result';
 
@@ -49,11 +49,6 @@ interface GameState {
   };
 }
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
 const TrueFalseCVContext = createContext<{
   gameState: GameState;
   startGame: () => Promise<void>;
@@ -62,6 +57,8 @@ const TrueFalseCVContext = createContext<{
   nextRound: () => Promise<void>;
   positions: Position[];
   addPosition: (position: Omit<Position, 'id'>) => Promise<void>;
+  editPosition: (id: number, position: Omit<Position, 'id'>) => Promise<void>;
+  deletePosition: (id: number) => Promise<void>;
   addResume: (resume: Omit<Resume, 'id'>) => Promise<void>;
 }>({
   gameState: {
@@ -79,6 +76,8 @@ const TrueFalseCVContext = createContext<{
   nextRound: async () => {},
   positions: [],
   addPosition: async () => {},
+  editPosition: async () => {},
+  deletePosition: async () => {},
   addResume: async () => {},
 });
 
@@ -228,6 +227,44 @@ export function TrueFalseCVProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const editPosition = async (id: number, position: Omit<Position, 'id'>) => {
+    try {
+      const { data, error } = await supabase
+        .from('positions')
+        .update(position)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setGameState(prev => ({
+        ...prev,
+        positions: prev.positions.map(p => p.id === id ? data : p),
+      }));
+    } catch (error) {
+      console.error('Error editing position:', error);
+    }
+  };
+
+  const deletePosition = async (id: number) => {
+    try {
+      const { error } = await supabase
+        .from('positions')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setGameState(prev => ({
+        ...prev,
+        positions: prev.positions.filter(p => p.id !== id),
+      }));
+    } catch (error) {
+      console.error('Error deleting position:', error);
+    }
+  };
+
   const addResume = async (resume: Omit<Resume, 'id'>) => {
     try {
       const { data, error } = await supabase
@@ -257,6 +294,8 @@ export function TrueFalseCVProvider({ children }: { children: ReactNode }) {
         nextRound,
         positions: gameState.positions,
         addPosition,
+        editPosition,
+        deletePosition,
         addResume,
       }}
     >

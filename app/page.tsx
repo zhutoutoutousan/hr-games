@@ -3,15 +3,14 @@
 import { useState } from "react"
 import GameScreen from "@/components/game-screen"
 import MatchingGame from "@/components/matching-game"
-import StoryGame from "@/components/story-game"
 import ResultScreen from "@/components/result-screen"
-import { FileText, Users, MessageSquare } from 'lucide-react';
+import { FileText, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { GameNav } from '@/components/GameNav';
 
-type GameType = 'cv' | 'matching' | 'story' | null;
+type GameType = 'cv' | 'matching' | null;
 
-export default function Home() {
+export default function HomePage() {
   const router = useRouter();
   const [gameState, setGameState] = useState<'selection' | 'playing' | 'result'>('selection');
   const [selectedGame, setSelectedGame] = useState<GameType>(null);
@@ -52,44 +51,31 @@ export default function Home() {
 
   if (gameState === 'selection') {
     return (
-      <main className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-        <div className="grid grid-cols-3 gap-8 max-w-7xl w-full">
+      <main className="h-screen w-screen overflow-hidden bg-gray-50 flex items-center justify-center p-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full h-[calc(100vh-1rem)] max-w-[1920px]">
           <button
             onClick={() => router.push('/games/true-false-cv')}
-            className="group flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-6"
+            className="group flex flex-col items-center justify-center p-4 bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-2 aspect-[4/3] md:aspect-square"
           >
-            <div className="h-24 w-24 bg-[#0065f0]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
-              <FileText className="h-12 w-12 text-[#0065f0] group-hover:text-white transition-colors duration-300" />
+            <div className="h-16 w-16 md:h-24 md:w-24 bg-[#0065f0]/10 rounded-xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
+              <FileText className="h-10 w-10 md:h-16 md:w-16 text-[#0065f0] group-hover:text-white transition-colors duration-300" />
             </div>
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold mb-3 text-gray-900">Fake CV Identification</h2>
-              <p className="text-gray-600">Test your ability to identify AI-generated resumes</p>
+            <div className="text-center overflow-hidden px-2">
+              <h2 className="text-xl md:text-2xl font-semibold text-gray-900 truncate">Fake CV Identification</h2>
+              <p className="text-sm md:text-lg text-gray-600 line-clamp-2 mt-1">Test your ability to identify AI-generated resumes</p>
             </div>
           </button>
 
           <button
             onClick={() => router.push('/games/matching')}
-            className="group flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-6"
+            className="group flex flex-col items-center justify-center p-4 bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-2 aspect-[4/3] md:aspect-square"
           >
-            <div className="h-24 w-24 bg-[#0065f0]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
-              <Users className="h-12 w-12 text-[#0065f0] group-hover:text-white transition-colors duration-300" />
+            <div className="h-16 w-16 md:h-24 md:w-24 bg-[#0065f0]/10 rounded-xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
+              <Users className="h-10 w-10 md:h-16 md:w-16 text-[#0065f0] group-hover:text-white transition-colors duration-300" />
             </div>
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold mb-3 text-gray-900">Conference Matching</h2>
-              <p className="text-gray-600">Match attendees based on interests and goals</p>
-            </div>
-          </button>
-
-          <button
-            onClick={() => router.push('/games/story')}
-            className="group flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-[#0065f0] space-y-6"
-          >
-            <div className="h-24 w-24 bg-[#0065f0]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#0065f0] transition-colors duration-300">
-              <MessageSquare className="h-12 w-12 text-[#0065f0] group-hover:text-white transition-colors duration-300" />
-            </div>
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold mb-3 text-gray-900">AI Story Collaboration</h2>
-              <p className="text-gray-600">Create stories together with AI assistance</p>
+            <div className="text-center overflow-hidden px-2">
+              <h2 className="text-xl md:text-2xl font-semibold text-gray-900 truncate">Conference Matching</h2>
+              <p className="text-sm md:text-lg text-gray-600 line-clamp-2 mt-1">Match attendees based on interests and goals</p>
             </div>
           </button>
         </div>
@@ -112,14 +98,6 @@ export default function Home() {
           )}
           {selectedGame === 'matching' && (
             <MatchingGame
-              round={currentRound}
-              totalRounds={totalRounds}
-              onAnswer={handleAnswer}
-              onBack={backToGames}
-            />
-          )}
-          {selectedGame === 'story' && (
-            <StoryGame
               round={currentRound}
               totalRounds={totalRounds}
               onAnswer={handleAnswer}

@@ -1,0 +1,43 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider  = "postgresql"
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL") // Required for Supabase
+}
+
+// Enable required extensions for Supabase
+model Extensions {
+    id String @id @default(cuid())
+
+    @@map("extensions")
+}
+
+model Match {
+    id            String   @id @default(cuid())
+    score         Float // AI matching score
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+    participantId String // External participant ID
+    matchedWithId String // External participant ID
+    isActive      Boolean  @default(true) // Whether this match is still active/visible
+
+    @@unique([participantId, matchedWithId]) // Prevent duplicate matches
+    @@index([participantId])
+    @@index([matchedWithId])
+}
+
+model SurveyAnswer {
+    id            String   @id @default(cuid())
+    createdAt     DateTime @default(now())
+    rating        Int // 1-5 rating
+    opinion       String? // Optional text opinion
+    participantId String // External participant ID
+
+    @@index([participantId])
+}

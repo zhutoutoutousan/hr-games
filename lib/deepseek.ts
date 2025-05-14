@@ -79,7 +79,7 @@ export async function generateResponse(
           { role: 'user', content: userMessage }
         ],
         temperature: 0.7,
-        max_tokens: 500,
+        max_tokens: 5000,
         stream,
         response_format: { type: 'json_object' }
       }),

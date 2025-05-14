@@ -18,7 +18,7 @@ export default function LeaderboardPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-[#0065f0]">排行榜</h1>
-          <div className="space-x-4">
+          <div className="space-x-4 mt-4">
             <Link href="/">
               <Button variant="outline">返回首页</Button>
             </Link>
