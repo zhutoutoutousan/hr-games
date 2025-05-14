@@ -11,6 +11,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import dynamic from 'next/dynamic';
 import { Progress } from '@/components/ui/progress';
+import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // Dynamically import QRCodeSVG with no SSR
 const QRCodeSVG = dynamic(() => import('qrcode.react').then(mod => mod.QRCodeSVG), {
@@ -40,7 +48,7 @@ interface Match {
   reasoning_steps: string[];
 }
 
-type GameStage = 'qr' | 'form' | 'matching' | 'result';
+type GameStage = 'qr' | 'form' | 'matching' | 'result' | 'matchSuccess';
 
 interface MatchingStep {
   candidate: Person;
@@ -48,6 +56,24 @@ interface MatchingStep {
   reasoning: string;
   reasoning_steps: string[];
 }
+
+// Add loading animation component
+const LoadingAnimation = () => (
+  <div className="flex flex-col items-center justify-center space-y-4">
+    <div className="relative w-24 h-24">
+      <div className="absolute inset-0 border-4 border-blue-200 rounded-full"></div>
+      <div className="absolute inset-0 border-4 border-blue-600 rounded-full animate-spin border-t-transparent"></div>
+    </div>
+    <div className="text-xl font-semibold text-blue-600">AI 正在分析匹配...</div>
+    <div className="text-gray-500">正在寻找最合适的 5 位匹配对象</div>
+  </div>
+);
+
+// Add function to randomly select people
+const getRandomPeople = (people: Person[], count: number = 5): Person[] => {
+  const shuffled = [...people].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, count);
+};
 
 export function SocialMatchingInterface() {
   const [stage, setStage] = useState<GameStage>('qr');
@@ -82,6 +108,21 @@ export function SocialMatchingInterface() {
   const [isDragging, setIsDragging] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamedMatches, setStreamedMatches] = useState<Match[]>([]);
+
+  // Add new state for match success
+  const [showMatchSuccess, setShowMatchSuccess] = useState(false);
+  const [successfulMatch, setSuccessfulMatch] = useState<Match | null>(null);
+
+  // Add search state
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Add search filter function
+  const filteredPeople = people.filter(person => 
+    person.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    person.industry.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    person.position.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    person.hobbies.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   // Load people when form stage is active
   useEffect(() => {
@@ -215,13 +256,20 @@ export function SocialMatchingInterface() {
     setStreamedMatches([]);
     
     try {
+      // Get random people from the pool
+      const randomPeople = getRandomPeople(people);
+      
       const response = await fetch('/api/deepseek/match', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          userData: formData,
+          userData: {
+            ...formData,
+            participantId: formData.name
+          },
+          candidates: randomPeople // Send the randomly selected people to the API
         }),
       });
 
@@ -245,8 +293,15 @@ export function SocialMatchingInterface() {
             if (line.startsWith('data: ')) {
               const data = JSON.parse(line.slice(6));
               if (data.type === 'match') {
-                newMatches.push(data.data);
-                setStreamedMatches(prev => [...prev, data.data]);
+                // Filter out self-matches and limit to 5 matches
+                if (data.data.person.name !== formData.name && newMatches.length < 5) {
+                  newMatches.push(data.data);
+                  setStreamedMatches(prev => [...prev, data.data]);
+                  // Update loading state as soon as we get the first match
+                  if (newMatches.length === 1) {
+                    setIsAnalyzing(false);
+                  }
+                }
               } else if (data.type === 'error') {
                 throw new Error(data.error);
               }
@@ -298,6 +353,97 @@ export function SocialMatchingInterface() {
     };
   };
 
+  const handleDragEnd = async (event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    const threshold = 100;
+    const offset = info.offset.x;
+    
+    if (Math.abs(offset) > threshold) {
+      if (offset > 0) {
+        // Get the current match from the matches array
+        const currentMatch = matches[currentCardIndex];
+        if (!currentMatch) return;
+
+        // Prevent self-matching
+        if (currentMatch.person.name === formData.name) {
+          toast({
+            title: "无法匹配",
+            description: "不能与自己匹配",
+            variant: "destructive"
+          });
+          return;
+        }
+
+        // Swiped right (like) - Update match using Supabase
+        try {
+          // First check if the match already exists
+          const { data: existingMatch, error: checkError } = await supabase
+            .from('Match')
+            .select('id')
+            .eq('participantId', formData.name)
+            .eq('matchedWithId', currentMatch.person.name)
+            .maybeSingle();
+
+          if (checkError) {
+            console.error('Check error:', checkError);
+            throw checkError;
+          }
+
+          // If match doesn't exist, create it
+          if (!existingMatch) {
+            const { error: insertError } = await supabase
+              .from('Match')
+              .insert([
+                {
+                  id: uuidv4(), // Generate a unique UUID for the match
+                  participantId: formData.name,
+                  matchedWithId: currentMatch.person.name,
+                  score: currentMatch.match_score,
+                  isActive: true,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                }
+              ]);
+
+            if (insertError) {
+              console.error('Insert error:', insertError);
+              throw insertError;
+            }
+
+            // Show match success view
+            setSuccessfulMatch(currentMatch);
+            setShowMatchSuccess(true);
+          } else {
+            toast({
+              title: "已经匹配过",
+              description: `您已经和 ${currentMatch.person.name} 匹配过了`,
+            });
+          }
+        } catch (error) {
+          console.error('Error updating match:', error);
+          toast({
+            title: "匹配失败",
+            description: error instanceof Error ? error.message : "更新匹配状态失败，请重试",
+            variant: "destructive"
+          });
+        }
+      }
+      
+      // Move to next card
+      if (currentCardIndex < matches.length - 1) {
+        setCurrentCardIndex(currentCardIndex + 1);
+      } else {
+        // No more cards
+        toast({
+          title: "匹配完成",
+          description: "您已经浏览完所有匹配结果！",
+        });
+      }
+    }
+    
+    setDirection(0);
+    setIsDragging(false);
+  };
+
   if (stage === 'qr') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-b from-blue-50 to-white">
@@ -328,146 +474,49 @@ export function SocialMatchingInterface() {
 
   if (stage === 'form') {
     return (
-      <div className="min-h-screen p-8 bg-gradient-to-b from-blue-50 to-white">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold mb-6 text-center">填写信息</h2>
-          <div className="grid grid-cols-2 gap-8">
-            {/* Form Section */}
-            <Card className="p-6">
-              <h3 className="text-xl font-semibold mb-4">新用户注册</h3>
-              <form onSubmit={handleFormSubmit} className="space-y-4">
-                <div>
-                  <Label htmlFor="name">我们如何称呼您？</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="gender">性别</Label>
-                  <Select
-                    value={formData.gender}
-                    onValueChange={(value) => setFormData({...formData, gender: value})}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择性别" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="男">男</SelectItem>
-                      <SelectItem value="女">女</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="industry">您所在行业是？</Label>
-                  <Input
-                    id="industry"
-                    value={formData.industry}
-                    onChange={(e) => setFormData({...formData, industry: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="position">您的职位</Label>
-                  <Input
-                    id="position"
-                    value={formData.position}
-                    onChange={(e) => setFormData({...formData, position: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="hobbies">您的爱好是？</Label>
-                  <Input
-                    id="hobbies"
-                    value={formData.hobbies}
-                    onChange={(e) => setFormData({...formData, hobbies: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="favoriteFood">您最喜欢吃的东西？</Label>
-                  <Input
-                    id="favoriteFood"
-                    value={formData.favoriteFood}
-                    onChange={(e) => setFormData({...formData, favoriteFood: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="leastFavoriteFood">您最讨厌吃的东西？</Label>
-                  <Input
-                    id="leastFavoriteFood"
-                    value={formData.leastFavoriteFood}
-                    onChange={(e) => setFormData({...formData, leastFavoriteFood: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="hrConcern">您现在在HR领域最关心的一个问题是？</Label>
-                  <Input
-                    id="hrConcern"
-                    value={formData.hrConcern}
-                    onChange={(e) => setFormData({...formData, hrConcern: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="weekendActivity">你和朋友一起度过周末时，通常会：</Label>
-                  <Input
-                    id="weekendActivity"
-                    value={formData.weekendActivity}
-                    onChange={(e) => setFormData({...formData, weekendActivity: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="socialPreference">你更喜欢哪种社交场合？</Label>
-                  <Input
-                    id="socialPreference"
-                    value={formData.socialPreference}
-                    onChange={(e) => setFormData({...formData, socialPreference: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="avatarRequest">想知道您匹配度最高的新朋友是谁吗？与我们分享您的头像，方便TA找到你</Label>
-                  <Input
-                    id="avatarRequest"
-                    value={formData.avatarRequest}
-                    onChange={(e) => setFormData({...formData, avatarRequest: e.target.value})}
-                    required
-                  />
-                </div>
-                <Button 
-                  type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700"
+      <div className="min-h-screen p-4 md:p-8 bg-gradient-to-b from-blue-50 to-white">
+        <div className="max-w-3xl mx-auto">
+          <h2 className="text-xl md:text-2xl font-bold mb-4 md:mb-6 text-center">选择已有用户</h2>
+          <Card className="p-4 md:p-6 h-[calc(100vh-200px)] md:h-[calc(100vh-250px)] flex flex-col">
+            <div className="mb-4">
+              <div className="relative">
+                <Input
+                  type="text"
+                  placeholder="搜索用户 (姓名、行业、职位、爱好)"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+                <svg
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
                 >
-                  提交信息
-                </Button>
-              </form>
-            </Card>
-
-            {/* User Selection Section */}
-            <Card className="p-6">
-              <h3 className="text-xl font-semibold mb-4">选择已有用户</h3>
-              <p className="text-gray-600 mb-4">如果您已经在用户池中，请选择您的身份：</p>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
               {isLoadingPeople ? (
                 <div className="flex items-center justify-center h-40">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>
-              ) : people.length === 0 ? (
+              ) : filteredPeople.length === 0 ? (
                 <div className="text-center text-gray-500 py-8">
-                  暂无用户数据
+                  {searchQuery ? '没有找到匹配的用户' : '暂无用户数据'}
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {people.map((person) => (
+                <div className="space-y-3">
+                  {filteredPeople.map((person) => (
                     <Card 
                       key={person.id} 
-                      className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                      className="p-3 md:p-4 hover:bg-gray-50 cursor-pointer transition-colors"
                       onClick={() => {
                         setFormData({
                           name: person.name,
@@ -485,17 +534,20 @@ export function SocialMatchingInterface() {
                         handleFormSubmit(new Event('submit') as any);
                       }}
                     >
-                      <div className="flex items-center gap-4">
-                        <Avatar className="h-12 w-12">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-10 w-10 md:h-12 md:w-12">
                           <AvatarImage src={person.avatarRequest || getRandomCatImage()} />
                           <AvatarFallback>
                             {person.name ? person.name[0] : '?'}
                           </AvatarFallback>
                         </Avatar>
-                        <div>
-                          <h4 className="font-semibold">{person.name}</h4>
-                          <p className="text-sm text-gray-500">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-sm md:text-base truncate">{person.name}</h4>
+                          <p className="text-xs md:text-sm text-gray-500 truncate">
                             {person.position} @ {person.industry}
+                          </p>
+                          <p className="text-xs text-gray-400 truncate mt-1">
+                            {person.hobbies}
                           </p>
                         </div>
                       </div>
@@ -503,149 +555,217 @@ export function SocialMatchingInterface() {
                   ))}
                 </div>
               )}
-            </Card>
-          </div>
+            </div>
+          </Card>
         </div>
+
+        {/* Add custom scrollbar styles */}
+        <style jsx global>{`
+          .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 3px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.3);
+          }
+          
+          /* Firefox scrollbar styles */
+          .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0, 0, 0, 0.2) rgba(0, 0, 0, 0.05);
+          }
+        `}</style>
       </div>
     );
   }
 
   if (stage === 'matching') {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 p-4 md:p-8">
         <div className="max-w-6xl mx-auto">
-          <h1 className="text-3xl font-bold text-center mb-8">AI 匹配分析中...</h1>
-          
-          <div className="grid grid-cols-2 gap-8">
-            {/* Network Graph */}
-            <div className="relative h-[600px] bg-white rounded-lg shadow-lg p-4">
-              <svg className="absolute inset-0 w-full h-full">
-                {/* Draw connections between all participants */}
-                {matchingSteps.slice(0, currentStep + 1).map((step, index) => {
-                  const currentCard = cardRefs.current[index];
-                  if (!currentCard) return null;
+          {/* Header Section */}
+          <div className="text-center mb-8">
+            <motion.h1 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-2xl md:text-4xl font-bold text-white mb-2"
+            >
+              AI 匹配分析中
+            </motion.h1>
+            <motion.p 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.2 }}
+              className="text-gray-400 text-sm md:text-base"
+            >
+              正在寻找最合适的 5 位匹配对象
+            </motion.p>
+          </div>
 
-                  const currentRect = currentCard.getBoundingClientRect();
-                  const centerX = currentRect.left + currentRect.width / 2;
-                  const centerY = currentRect.top + currentRect.height / 2;
+          {/* Main Content */}
+          <div className="space-y-6">
+            {/* Loading Animation */}
+            {isAnalyzing && streamedMatches.length === 0 && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex flex-col items-center justify-center py-12"
+              >
+                <div className="relative w-24 h-24 mb-8">
+                  <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+                  <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-8 h-8 bg-blue-500 rounded-full animate-pulse"></div>
+                  </div>
+                </div>
+                <div className="text-blue-400 text-lg font-medium">AI 正在分析中...</div>
+              </motion.div>
+            )}
 
-                  // Draw connections to all other participants
-                  return matchingSteps.slice(0, currentStep + 1).map((otherStep, otherIndex) => {
-                    if (index >= otherIndex) return null; // Avoid duplicate connections
-
-                    const otherCard = cardRefs.current[otherIndex];
-                    if (!otherCard) return null;
-
-                    const otherRect = otherCard.getBoundingClientRect();
-                    const otherCenterX = otherRect.left + otherRect.width / 2;
-                    const otherCenterY = otherRect.top + otherRect.height / 2;
-
-                    // Calculate average score for the connection
-                    const avgScore = (step.score + otherStep.score) / 2;
-                    const style = getLineStyle(avgScore);
-
-                    return (
-                      <line
-                        key={`connection-${index}-${otherIndex}`}
-                        x1={centerX}
-                        y1={centerY}
-                        x2={otherCenterX}
-                        y2={otherCenterY}
-                        stroke="#0065f0"
-                        strokeWidth={style.strokeWidth}
-                        opacity={style.opacity}
-                        className="transition-all duration-300"
-                      />
-                    );
-                  });
-                })}
-              </svg>
-
-              {/* Participant nodes */}
-              <div className="grid grid-cols-2 gap-4">
+            {/* Matches Grid with Fixed Height and Scrollbar */}
+            <div className="h-[calc(100vh-200px)] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pr-2">
                 {streamedMatches.map((match, index) => (
-                  <div
+                  <motion.div
                     key={match.id}
-                    ref={el => {
-                      cardRefs.current[index] = el;
-                    }}
+                    initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
                     className="relative"
                   >
-                    <Card className="bg-white hover:shadow-lg transition-shadow">
-                      <CardHeader>
-                        <div className="flex items-center gap-4">
-                          <Avatar className="h-12 w-12">
-                            <AvatarImage src={match.person.avatarRequest || getRandomCatImage()} />
-                            <AvatarFallback>
-                              {match.person.name ? match.person.name[0] : '?'}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <CardTitle className="text-lg">
-                              {match.person.name || '未知用户'}
-                              {match.person.position && (
-                                <span className="ml-2 text-sm font-normal text-gray-500">
-                                  ({match.person.position})
-                                </span>
-                              )}
-                            </CardTitle>
-                            {match.person.industry && (
-                              <div className="text-sm text-gray-500">
-                                {match.person.industry}
+                    <Card className="bg-gray-800/50 backdrop-blur-sm border-gray-700/50 overflow-hidden">
+                      <div className="relative">
+                        {/* Match Score Badge */}
+                        <div className="absolute top-4 right-4 z-10">
+                          <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                            {match.match_score}% 匹配
+                          </div>
+                        </div>
+
+                        {/* Avatar Section */}
+                        <div className="relative h-48 bg-gradient-to-br from-blue-500/20 to-purple-500/20">
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <Avatar className="h-32 w-32 border-4 border-white/10">
+                              <AvatarImage src={match.person.avatarRequest || getRandomCatImage()} />
+                              <AvatarFallback className="bg-gray-700 text-white text-4xl">
+                                {match.person.name?.[0] || '?'}
+                              </AvatarFallback>
+                            </Avatar>
+                          </div>
+                        </div>
+
+                        {/* Info Section */}
+                        <CardContent className="p-6">
+                          <div className="space-y-4">
+                            <div>
+                              <h3 className="text-xl font-bold text-white">
+                                {match.person.name}
+                              </h3>
+                              <p className="text-gray-400">
+                                {match.person.position} @ {match.person.industry}
+                              </p>
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 text-gray-300">
+                                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                <span className="text-sm">{match.person.hobbies}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-gray-300">
+                                <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                                <span className="text-sm">{match.person.hrConcern}</span>
+                              </div>
+                            </div>
+
+                            {/* Match Analysis */}
+                            {match.reasoning_steps && match.reasoning_steps.length > 0 && (
+                              <div className="mt-4 pt-4 border-t border-gray-700/50">
+                                <div className="space-y-2">
+                                  {match.reasoning_steps.map((step, stepIndex) => (
+                                    <motion.div
+                                      key={stepIndex}
+                                      initial={{ opacity: 0, x: -20 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      transition={{ delay: stepIndex * 0.1 }}
+                                      className="flex items-start gap-2"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">
+                                        {stepIndex + 1}
+                                      </div>
+                                      <p className="text-sm text-gray-400">{step}</p>
+                                    </motion.div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
-                          <div className="ml-auto text-xl font-bold text-[#0065f0]">
-                            {match.match_score}%
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        {match.person.hobbies && (
-                          <div className="text-sm text-gray-600">
-                            <div className="font-medium">兴趣爱好:</div>
-                            <div>{match.person.hobbies}</div>
-                          </div>
-                        )}
-                      </CardContent>
+                        </CardContent>
+                      </div>
                     </Card>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             </div>
 
-            {/* Analysis Steps */}
-            <div className="space-y-4">
-              <h2 className="text-xl font-semibold mb-4">匹配分析过程</h2>
-              {streamedMatches.map((match, index) => (
-                <Card key={match.id} className="bg-white">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold">{match.person.name}</h3>
-                      <div className="text-[#0065f0] font-bold">{match.match_score}%</div>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      {match.reasoning_steps && match.reasoning_steps.length > 0 ? (
-                        <div className="space-y-2">
-                          {match.reasoning_steps.map((stepText, stepIndex) => (
-                            <div key={stepIndex} className="flex items-start gap-2">
-                              <div className="w-6 h-6 rounded-full bg-[#0065f0] text-white flex items-center justify-center text-sm font-bold">
-                                {stepIndex + 1}
-                              </div>
-                              <p className="text-gray-700">{stepText}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-gray-700">{match.reasoning}</p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            {/* Progress Indicator */}
+            {streamedMatches.length > 0 && (
+              <div className="flex justify-center mt-8">
+                <div className="flex items-center gap-2">
+                  {[...Array(5)].map((_, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ scale: 0.8, opacity: 0.5 }}
+                      animate={{ 
+                        scale: i < streamedMatches.length ? 1 : 0.8,
+                        opacity: i < streamedMatches.length ? 1 : 0.5
+                      }}
+                      className={`w-3 h-3 rounded-full ${
+                        i < streamedMatches.length ? 'bg-blue-500' : 'bg-gray-600'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Add custom scrollbar styles */}
+        <style jsx global>{`
+          .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+          }
+          
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+          }
+          
+          /* Firefox scrollbar styles */
+          .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.1);
+          }
+        `}</style>
       </div>
     );
   }
@@ -654,42 +774,100 @@ export function SocialMatchingInterface() {
     const currentMatch = matches[currentCardIndex];
     if (!currentMatch) return null;
 
-    const handleDragEnd = (event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-      const threshold = 100;
-      const offset = info.offset.x;
-      
-      if (Math.abs(offset) > threshold) {
-        if (offset > 0) {
-          // Swiped right (like)
-          toast({
-            title: "匹配成功！",
-            description: `您和 ${currentMatch.person.name} 匹配成功！`,
-          });
-        }
-        
-        // Move to next card
-        if (currentCardIndex < matches.length - 1) {
-          setCurrentCardIndex(currentCardIndex + 1);
-        } else {
-          // No more cards
-          toast({
-            title: "匹配完成",
-            description: "您已经浏览完所有匹配结果！",
-          });
-        }
-      }
-      
-      setDirection(0);
-      setIsDragging(false);
-    };
+    // Add match success view component
+    const MatchSuccessView = ({ match, onClose }: { match: Match; onClose: () => void }) => (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.9, opacity: 0 }}
+          className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden"
+        >
+          <div className="relative">
+            <div className="h-48 bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+              <div className="text-center text-white">
+                <h2 className="text-4xl font-bold mb-2">匹配成功！</h2>
+                <p className="text-xl">你们有 {match.match_score}% 的匹配度</p>
+              </div>
+            </div>
+            <div className="absolute -bottom-16 left-1/2 transform -translate-x-1/2">
+              <Avatar className="h-32 w-32 border-4 border-white shadow-lg">
+                <AvatarImage src={match.person.avatarRequest || getRandomCatImage()} />
+                <AvatarFallback>{match.person.name[0]}</AvatarFallback>
+              </Avatar>
+            </div>
+          </div>
+          
+          <div className="pt-20 pb-6 px-6">
+            <div className="text-center mb-6">
+              <h3 className="text-2xl font-bold">{match.person.name}</h3>
+              <p className="text-gray-600">{match.person.position} @ {match.person.industry}</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <h4 className="font-semibold text-gray-700">兴趣爱好</h4>
+                <p className="text-gray-600">{match.person.hobbies}</p>
+              </div>
+              
+              <div>
+                <h4 className="font-semibold text-gray-700">HR关注点</h4>
+                <p className="text-gray-600">{match.person.hrConcern}</p>
+              </div>
+              
+              <div>
+                <h4 className="font-semibold text-gray-700">社交偏好</h4>
+                <p className="text-gray-600">
+                  {match.person.weekendActivity}
+                  <br />
+                  {match.person.socialPreference}
+                </p>
+              </div>
+            </div>
+            
+            <div className="mt-8 flex flex-col gap-4">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={onClose}
+              >
+                返回首页
+              </Button>
+              <Button
+                className="w-full bg-[#0065f0] hover:bg-[#0065f0]/90"
+                onClick={() => {
+                  toast({
+                    title: "联系会议人员",
+                    description: "请前往会议服务台，工作人员将协助您与匹配对象建立联系",
+                    duration: 5000,
+                  });
+                }}
+              >
+                联系会议人员
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    );
 
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
+      <div className="min-h-screen bg-gray-50 p-4 md:p-8">
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold text-center mb-8">匹配结果</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-center mb-4 md:mb-8">匹配结果</h1>
           
-          <div className="relative h-[800px]">
+          <div className="relative h-[600px] md:h-[800px]">
             <AnimatePresence>
+              {showMatchSuccess && successfulMatch && (
+                <MatchSuccessView
+                  match={successfulMatch}
+                  onClose={() => {
+                    setShowMatchSuccess(false);
+                    setSuccessfulMatch(null);
+                  }}
+                />
+              )}
+              
               <motion.div
                 key={currentCardIndex}
                 className="absolute w-full"
@@ -711,7 +889,7 @@ export function SocialMatchingInterface() {
                 }}
               >
                 <Card className="bg-white shadow-lg">
-                  <div className="relative h-[500px]">
+                  <div className="relative h-[300px] md:h-[500px]">
                     <Avatar className="absolute inset-0 w-full h-full rounded-none">
                       <AvatarImage src={currentMatch.person.avatarRequest || getRandomCatImage()} />
                       <AvatarFallback>
@@ -728,7 +906,7 @@ export function SocialMatchingInterface() {
                       <p className="text-white/80 text-lg">{currentMatch.person.industry}</p>
                     </div>
                   </div>
-                  <CardContent className="p-6">
+                  <CardContent className="p-4 md:p-6">
                     <div className="flex items-center justify-between mb-6">
                       <div className="text-3xl font-bold text-[#0065f0]">
                         {currentMatch.match_score}%
@@ -793,9 +971,9 @@ export function SocialMatchingInterface() {
             </AnimatePresence>
             
             {/* Swipe Tutorial */}
-            <div className="absolute top-4 left-0 right-0 flex justify-center gap-8">
-              <div className="bg-white/90 backdrop-blur-sm px-6 py-3 rounded-lg shadow-lg">
-                <p className="text-gray-700 text-lg">
+            <div className="absolute top-4 left-0 right-0 flex justify-center gap-4 md:gap-8">
+              <div className="bg-white/90 backdrop-blur-sm px-4 md:px-6 py-2 md:py-3 rounded-lg shadow-lg">
+                <p className="text-sm md:text-lg text-gray-700">
                   <span className="text-red-500 font-bold">← 左滑</span> 跳过 | 
                   <span className="text-green-500 font-bold"> 右滑 →</span> 匹配
                 </p>
@@ -803,18 +981,18 @@ export function SocialMatchingInterface() {
             </div>
             
             {/* Action Buttons */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-4">
+            <div className="absolute bottom-4 right-4 flex flex-col gap-2 md:gap-4">
               <Button
                 variant="outline"
                 size="lg"
-                className="w-40 h-12 text-lg"
+                className="w-32 md:w-40 h-10 md:h-12 text-sm md:text-lg"
                 onClick={() => setStage('form')}
               >
                 重新匹配
               </Button>
           <Button 
                 size="lg"
-                className="w-40 h-12 text-lg bg-[#0065f0] hover:bg-[#0065f0]/90"
+                className="w-32 md:w-40 h-10 md:h-12 text-sm md:text-lg bg-[#0065f0] hover:bg-[#0065f0]/90"
             onClick={handleRefresh}
           >
                 刷新结果
