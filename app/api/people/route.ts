@@ -63,6 +63,8 @@ export async function GET() {
           });
 
           const detailData = await detailResponse.json();
+
+          console.log(detailData);
           const formData = detailData.items[0];
 
           const personData = {

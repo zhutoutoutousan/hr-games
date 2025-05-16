@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { GameNav } from '@/components/GameNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 import { getSurveyData, submitSurveyAnswer } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import ReactMarkdown from 'react-markdown';
+import confetti from 'canvas-confetti';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD'];
 
@@ -557,28 +560,163 @@ const RESUMES = [
   }
 ];
 
-export default function TrueFalseCVPage() {
+interface SurveyResult {
+  aiLeadership: string;
+  aiImpactAreas: string;
+}
+
+interface LeadershipResult {
+  aiLeadership: string;
+}
+
+interface ImpactResult {
+  aiImpactAreas: string;
+}
+
+// Add this at the top of the file after the imports
+const markdownStyles = {
+  h1: 'text-2xl font-bold text-blue-600 mb-4',
+  h2: 'text-xl font-bold text-purple-600 mb-3',
+  h3: 'text-lg font-bold text-indigo-600 mb-2',
+  p: 'text-gray-600 leading-relaxed mb-3',
+  strong: 'text-gray-800 font-semibold',
+  ul: 'text-gray-600 space-y-1 mb-4 list-disc pl-5',
+  li: 'text-gray-600 mb-1',
+  a: 'text-blue-600 hover:underline',
+  blockquote: 'text-gray-500 border-l-4 border-blue-500 pl-4 italic',
+  code: 'text-pink-600 bg-gray-50 px-1 py-0.5 rounded',
+  pre: 'bg-gray-50 text-gray-800 rounded-lg p-4 mb-4',
+  hr: 'border-gray-200 my-4',
+  table: 'border-collapse w-full mb-4',
+  th: 'border border-gray-300 bg-gray-50 p-2 text-left',
+  td: 'border border-gray-300 p-2',
+  img: 'rounded-lg mb-4'
+};
+
+export default function TrueFalseCVGame() {
   const router = useRouter();
   const [currentPosition, setCurrentPosition] = useState(JOB_POSITIONS[0]);
   const [resumes, setResumes] = useState(RESUMES);
   const [currentResumeIndex, setCurrentResumeIndex] = useState(0);
-  const [gameState, setGameState] = useState<'idle' | 'playing' | 'survey' | 'result'>('idle');
+  const [gameState, setGameState] = useState<'idle' | 'playing' | 'result' | 'survey'>('idle');
   const [surveyData, setSurveyData] = useState<any[]>([]);
+  const [leadershipData, setLeadershipData] = useState<any[]>([]);
+  const [impactData, setImpactData] = useState<any[]>([]);
   const [userOpinion, setUserOpinion] = useState('');
   const [selectedRating, setSelectedRating] = useState<number | null>(null);
   const [answers, setAnswers] = useState<{ isAI: boolean; agreeScore: boolean }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAIAnswer, setIsAIAnswer] = useState<boolean | null>(null);
   const [agreeScoreAnswer, setAgreeScoreAnswer] = useState<boolean | null>(null);
+  const [surveyAnswers, setSurveyAnswers] = useState<{
+    aiUsageOpinion: string;
+    aiLeadership: string;
+    aiImpactAreas: string[];
+    otherImpactArea: string;
+  }>({
+    aiUsageOpinion: '',
+    aiLeadership: '',
+    aiImpactAreas: [],
+    otherImpactArea: '',
+  });
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [score, setScore] = useState(0);
+  const [showGuessResult, setShowGuessResult] = useState(false);
+  const [guessCorrect, setGuessCorrect] = useState(false);
+  const [selectedGuess, setSelectedGuess] = useState<string>('');
+  const [selectedGuessType, setSelectedGuessType] = useState<'opinion' | 'leadership' | 'impact'>('opinion');
+  const [showResults, setShowResults] = useState(false);
+  const [guesses, setGuesses] = useState({
+    opinion: '',
+    leadership: '',
+    impact: ''
+  });
+  const [guessResults, setGuessResults] = useState({
+    opinion: false,
+    leadership: false,
+    impact: false
+  });
+  const [showAllGuessResults, setShowAllGuessResults] = useState(false);
+  const [countdown, setCountdown] = useState(60);
 
   useEffect(() => {
     fetchSurveyData();
   }, []);
 
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (gameState === 'result' && showResults) {
+      timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setGameState('idle');
+            return 60;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [gameState, showResults]);
+
   const fetchSurveyData = async () => {
     try {
       const data = await getSurveyData();
       setSurveyData(data.length > 0 ? data : DEFAULT_SURVEY_DATA);
+      
+      // Fetch leadership data
+      const { data: leadershipResults } = await supabase
+        .from('SurveyAnswer')
+        .select('aiLeadership');
+      
+      const leadershipCounts = {
+        '由 IT 部门主导': 0,
+        '由 HR部门主导': 0,
+        '由公司高层管理（C-Suite）主导': 0
+      };
+      
+      leadershipResults?.forEach((result: LeadershipResult) => {
+        if (result.aiLeadership in leadershipCounts) {
+          leadershipCounts[result.aiLeadership as keyof typeof leadershipCounts]++;
+        }
+      });
+      
+      setLeadershipData(Object.entries(leadershipCounts).map(([name, value]) => ({
+        name,
+        value
+      })));
+
+      // Fetch impact areas data
+      const { data: impactResults } = await supabase
+        .from('SurveyAnswer')
+        .select('aiImpactAreas');
+      
+      const impactCounts = {
+        '简历筛选与评估': 0,
+        '安排面试': 0,
+        '知识库查询': 0,
+        '自动生成JD': 0,
+        '自动生成招聘沟通内容': 0,
+        '会议纪要/面试记录': 0
+      };
+      
+      impactResults?.forEach((result: ImpactResult) => {
+        const areas = JSON.parse(result.aiImpactAreas);
+        areas.forEach((area: string) => {
+          if (area in impactCounts) {
+            impactCounts[area as keyof typeof impactCounts]++;
+          }
+        });
+      });
+      
+      setImpactData(Object.entries(impactCounts).map(([name, value]) => ({
+        name,
+        value
+      })));
     } catch (error) {
       console.error('Error fetching survey data:', error);
       setSurveyData(DEFAULT_SURVEY_DATA);
@@ -616,95 +754,204 @@ export default function TrueFalseCVPage() {
 
   const handleConfirm = () => {
     if (isAIAnswer === null || agreeScoreAnswer === null) return;
-    handleResumeAnswer(isAIAnswer, agreeScoreAnswer);
+    
+    const currentResume = resumes[currentResumeIndex];
+    const correct = isAIAnswer === currentResume.isAIGenerated;
+    setIsCorrect(correct);
+    setShowFeedback(true);
+
+    if (correct) {
+      // Trigger confetti for correct answer
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+    }
+
+    // Update score
+    setScore(prev => prev + (correct ? 1 : 0));
+    
+    // Move to next resume after a delay
+    setTimeout(() => {
+      setShowFeedback(false);
+      if (currentResumeIndex < resumes.length - 1) {
+        setCurrentResumeIndex(prev => prev + 1);
+        setIsAIAnswer(null);
+        setAgreeScoreAnswer(null);
+      } else {
+        setGameState('survey');
+      }
+    }, 2000);
   };
 
   const handleSurveySubmit = async () => {
-    if (selectedRating === null) return;
+    if (!surveyAnswers.aiUsageOpinion || !surveyAnswers.aiLeadership || 
+        surveyAnswers.aiImpactAreas.length === 0) {
+      alert('请完成所有必答题');
+      return;
+    }
     
     try {
-      // Generate a unique participantId for this session
       const participantId = `participant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      await submitSurveyAnswer(selectedRating, userOpinion, participantId);
-      await fetchSurveyData(); // Refresh survey data
+      await submitSurveyAnswer({
+        aiUsageOpinion: surveyAnswers.aiUsageOpinion,
+        aiLeadership: surveyAnswers.aiLeadership,
+        aiImpactAreas: JSON.stringify(surveyAnswers.aiImpactAreas),
+        otherImpactArea: surveyAnswers.otherImpactArea || '',
+        participantId
+      });
+      await fetchSurveyData();
       setGameState('result');
+      setShowResults(false); // Ensure we show the guessing game first
     } catch (error) {
       console.error('Error submitting survey:', error);
       alert('提交失败，请重试');
     }
   };
 
-  const renderPieChart = () => (
-    <div className="h-[500px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={surveyData}
-            cx="50%"
-            cy="50%"
-            labelLine={false}
-            outerRadius={200}
-            fill="#8884d8"
-            dataKey="value"
-            label={({ name, percent, value }) => 
-              value > 0 ? `${name} ${(percent * 100).toFixed(0)}%` : ''
-            }
-          >
-            {surveyData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip 
-            formatter={(value: number, name: string) => [`${value} 票`, name]}
-            contentStyle={{ 
-              backgroundColor: 'rgba(255, 255, 255, 0.9)',
-              border: '1px solid #ccc',
-              borderRadius: '4px',
-              padding: '8px'
-            }}
-          />
-          <Legend 
-            layout="horizontal" 
-            verticalAlign="bottom" 
-            align="center"
-            wrapperStyle={{
-              paddingTop: '20px'
-            }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-      {surveyData.every(item => item.value === 0) && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <p className="text-gray-500 text-lg">暂无数据</p>
-        </div>
-      )}
-    </div>
-  );
+  const handleAnswer = (isAI: boolean) => {
+    const currentResume = resumes[currentResumeIndex];
+    const correct = isAI === currentResume.isAIGenerated;
+    setIsCorrect(correct);
+    setShowFeedback(true);
+
+    if (correct) {
+      // Trigger confetti for correct answer
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+    }
+
+    // Update score
+    setScore(prev => prev + (correct ? 1 : 0));
+    
+    // Move to next resume after a delay
+    setTimeout(() => {
+      setShowFeedback(false);
+      if (currentResumeIndex < resumes.length - 1) {
+        setCurrentResumeIndex(prev => prev + 1);
+      } else {
+        setGameState('result');
+      }
+    }, 2000);
+  };
+
+  const handleGuess = () => {
+    if (!guesses.opinion || !guesses.leadership || !guesses.impact) {
+      alert('请完成所有三个问题的猜测');
+      return;
+    }
+
+    const results = {
+      opinion: guesses.opinion === surveyData.reduce((prev, current) => 
+        (prev.value > current.value) ? prev : current
+      ).name,
+      leadership: guesses.leadership === leadershipData.reduce((prev, current) => 
+        (prev.value > current.value) ? prev : current
+      ).name,
+      impact: guesses.impact === impactData.reduce((prev, current) => 
+        (prev.value > current.value) ? prev : current
+      ).name
+    };
+
+    setGuessResults(results);
+    setShowAllGuessResults(true);
+
+    // Trigger confetti if at least one guess is correct
+    if (Object.values(results).some(result => result)) {
+      confetti({
+        particleCount: 150,
+        spread: 100,
+        origin: { y: 0.6 }
+      });
+    }
+
+    // Show results after 3 seconds
+    setTimeout(() => {
+      setShowResults(true);
+    }, 3000);
+  };
 
   if (gameState === 'idle') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden relative">
         <GameNav />
-        <div className="h-[calc(100vh-4rem)] overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="text-center mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-4">
-                你认为候选人在求职中可以使用AI吗？
+        <div className="absolute inset-0 flex items-center justify-center">
+          {/* Background effects */}
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100 rounded-full filter blur-3xl opacity-30 animate-pulse"></div>
+            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-100 rounded-full filter blur-3xl opacity-30 animate-pulse delay-300"></div>
+            <div className="absolute top-1/3 right-1/3 w-96 h-96 bg-pink-100 rounded-full filter blur-3xl opacity-30 animate-pulse delay-700"></div>
+            </div>
+
+          {/* Content */}
+          <div className="relative z-10 text-center max-w-4xl mx-auto px-4">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8 }}
+            >
+              <h1 className="text-6xl md:text-7xl font-bold mb-8">
+                <motion.span
+                  className="block bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.8, delay: 0.2 }}
+                >
+                  候选人用 AI 写简历，
+                </motion.span>
+                <motion.span
+                  className="block bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-pink-600"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.8, delay: 0.4 }}
+                >
+                  你能看得出吗？
+                </motion.span>
               </h1>
-            </div>
-            <div className="relative">
-              {renderPieChart()}
-            </div>
-            <div className="text-center mt-8">
+
+              <motion.p
+                className="text-2xl md:text-3xl text-gray-600 mb-12 max-w-2xl mx-auto leading-relaxed"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.8, delay: 0.6 }}
+              >
+                参与趣味小测验，猜猜哪些简历是
+                <span className="text-blue-600 font-medium">"真人写的"</span>，
+                哪些是
+                <span className="text-purple-600 font-medium">AI 的产物</span>。
+              </motion.p>
+
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5, delay: 0.8 }}
+                className="relative"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full filter blur-xl opacity-50 animate-pulse"></div>
               <Button
                 size="lg"
                 onClick={handleStartGame}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="relative bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-xl px-16 py-8 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
                 disabled={isLoading}
               >
-                {isLoading ? '加载中...' : '开始游戏'}
+                  {isLoading ? (
+                    <span className="flex items-center">
+                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      加载中...
+                    </span>
+                  ) : (
+                    '挑战开始！'
+                  )}
               </Button>
-            </div>
+              </motion.div>
+            </motion.div>
           </div>
         </div>
       </div>
@@ -716,169 +963,964 @@ export default function TrueFalseCVPage() {
     const canProceed = isAIAnswer !== null && agreeScoreAnswer !== null;
 
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden relative">
         <GameNav />
-        <div className="h-[calc(100vh-4rem)] overflow-y-auto">
+        {/* Background Effects */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-50/50 to-purple-50/50"></div>
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100 rounded-full filter blur-3xl opacity-20 animate-pulse"></div>
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-300"></div>
+        </div>
+
+        <div className="relative h-[calc(100vh-4rem)] overflow-y-auto">
           <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="grid grid-cols-12 gap-8">
-              <div className="col-span-3">
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">{currentPosition.title}</h2>
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                  <h3 className="text-lg font-semibold mb-2">职位描述</h3>
-                  <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown>{currentPosition.description}</ReactMarkdown>
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="grid grid-cols-12 gap-8"
+            >
+              {/* Job Description Panel */}
+              <motion.div 
+                initial={{ opacity: 0, x: -50 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.2 }}
+                className="col-span-3"
+              >
+                <div className="sticky top-4">
+                  <h2 className="text-2xl font-bold mb-3 flex items-center">
+                    <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                      {currentPosition.title}
+                    </span>
+                  </h2>
+                  <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 transform hover:scale-[1.02] transition-transform duration-300 border border-gray-100/50">
+                    <h3 className="text-lg font-semibold mb-3 text-gray-800">职位描述</h3>
+                    <div className="markdown-content">
+                      <ReactMarkdown
+                        components={{
+                          h1: ({node, ...props}) => <h1 className={markdownStyles.h1} {...props} />,
+                          h2: ({node, ...props}) => <h2 className={markdownStyles.h2} {...props} />,
+                          h3: ({node, ...props}) => <h3 className={markdownStyles.h3} {...props} />,
+                          p: ({node, ...props}) => <p className={markdownStyles.p} {...props} />,
+                          strong: ({node, ...props}) => <strong className={markdownStyles.strong} {...props} />,
+                          ul: ({node, ...props}) => <ul className={markdownStyles.ul} {...props} />,
+                          li: ({node, ...props}) => <li className={markdownStyles.li} {...props} />,
+                          a: ({node, ...props}) => <a className={markdownStyles.a} {...props} />,
+                          blockquote: ({node, ...props}) => <blockquote className={markdownStyles.blockquote} {...props} />,
+                          code: ({node, ...props}) => <code className={markdownStyles.code} {...props} />,
+                          pre: ({node, ...props}) => <pre className={markdownStyles.pre} {...props} />,
+                          hr: ({node, ...props}) => <hr className={markdownStyles.hr} {...props} />,
+                          table: ({node, ...props}) => <table className={markdownStyles.table} {...props} />,
+                          th: ({node, ...props}) => <th className={markdownStyles.th} {...props} />,
+                          td: ({node, ...props}) => <td className={markdownStyles.td} {...props} />,
+                          img: ({node, ...props}) => <img className={markdownStyles.img} {...props} />
+                        }}
+                      >
+                        {currentPosition.description}
+                      </ReactMarkdown>
                   </div>
                 </div>
               </div>
-              <div className="col-span-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">简历 {currentResumeIndex + 1}/3</h2>
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <h3 className="text-lg font-semibold">AI匹配度评分</h3>
-                    <span className="text-blue-600 font-bold">{currentResume.aiScore}%</span>
+              </motion.div>
+
+              {/* Resume Panel */}
+              <motion.div 
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="col-span-6"
+              >
+                <div className="sticky top-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      简历 {currentResumeIndex + 1}/3
+                    </h2>
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl filter blur-xl opacity-50 group-hover:opacity-70 transition-opacity duration-300"></div>
+                      <div className="relative bg-white/90 backdrop-blur-sm rounded-2xl p-4 shadow-xl border border-gray-100">
+                        <div className="text-center">
+                          <div className="text-sm text-gray-500 mb-1">AI匹配度</div>
+                          <div className="relative">
+                            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full filter blur-md opacity-30 animate-pulse"></div>
+                            <div className="relative text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                              {currentResume.aiScore}%
                   </div>
-                  <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown>{currentResume.content}</ReactMarkdown>
                   </div>
+                          <div className="mt-2 h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                            <motion.div
+                              initial={{ width: 0 }}
+                              animate={{ width: `${currentResume.aiScore}%` }}
+                              transition={{ duration: 1, delay: 0.5 }}
+                              className="h-full bg-gradient-to-r from-blue-600 to-purple-600"
+                            />
                 </div>
               </div>
-              <div className="col-span-3">
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">你的判断</h2>
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                  <div className="space-y-6">
-                    <div>
-                      <h4 className="font-medium mb-2">该简历是否使用AI生成？</h4>
-                      <div className="flex gap-4">
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 transform hover:scale-[1.02] transition-transform duration-300 border border-gray-100/50">
+                    <div className="markdown-content">
+                      <ReactMarkdown
+                        components={{
+                          h1: ({node, ...props}) => <h1 className={markdownStyles.h1} {...props} />,
+                          h2: ({node, ...props}) => <h2 className={markdownStyles.h2} {...props} />,
+                          h3: ({node, ...props}) => <h3 className={markdownStyles.h3} {...props} />,
+                          p: ({node, ...props}) => <p className={markdownStyles.p} {...props} />,
+                          strong: ({node, ...props}) => <strong className={markdownStyles.strong} {...props} />,
+                          ul: ({node, ...props}) => <ul className={markdownStyles.ul} {...props} />,
+                          li: ({node, ...props}) => <li className={markdownStyles.li} {...props} />,
+                          a: ({node, ...props}) => <a className={markdownStyles.a} {...props} />,
+                          blockquote: ({node, ...props}) => <blockquote className={markdownStyles.blockquote} {...props} />,
+                          code: ({node, ...props}) => <code className={markdownStyles.code} {...props} />,
+                          pre: ({node, ...props}) => <pre className={markdownStyles.pre} {...props} />,
+                          hr: ({node, ...props}) => <hr className={markdownStyles.hr} {...props} />,
+                          table: ({node, ...props}) => <table className={markdownStyles.table} {...props} />,
+                          th: ({node, ...props}) => <th className={markdownStyles.th} {...props} />,
+                          td: ({node, ...props}) => <td className={markdownStyles.td} {...props} />,
+                          img: ({node, ...props}) => <img className={markdownStyles.img} {...props} />
+                        }}
+                      >
+                        {currentResume.content}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Judgment Panel */}
+              <motion.div 
+                initial={{ opacity: 0, x: 50 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.6 }}
+                className="col-span-3"
+              >
+                <div className="sticky top-4">
+                  <h2 className="text-2xl font-bold mb-3 flex items-center">
+                    <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                      你的判断
+                    </span>
+                  </h2>
+                  <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 space-y-6 border border-gray-100/50">
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.8 }}
+                      className="space-y-4"
+                    >
+                      <h4 className="font-medium text-gray-800">该简历是否使用AI生成？</h4>
+                      <div className="grid grid-cols-2 gap-3">
                         <Button 
                           variant={isAIAnswer === true ? "default" : "outline"}
                           onClick={() => setIsAIAnswer(true)}
-                          className="flex-1"
+                          className={`relative overflow-hidden group h-12 ${
+                            isAIAnswer === true ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' : ''
+                          }`}
                         >
-                          是
+                          <span className="relative z-10">是</span>
+                          {isAIAnswer === true && (
+                            <motion.div
+                              className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3 }}
+                            />
+                          )}
                         </Button>
                         <Button 
                           variant={isAIAnswer === false ? "default" : "outline"}
                           onClick={() => setIsAIAnswer(false)}
-                          className="flex-1"
+                          className={`relative overflow-hidden group h-12 ${
+                            isAIAnswer === false ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' : ''
+                          }`}
                         >
-                          否
+                          <span className="relative z-10">否</span>
+                          {isAIAnswer === false && (
+                            <motion.div
+                              className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3 }}
+                            />
+                          )}
                         </Button>
                       </div>
-                    </div>
-                    <div>
-                      <h4 className="font-medium mb-2">是否同意AI给出的匹配度评分？</h4>
-                      <div className="flex gap-4">
+                    </motion.div>
+
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 1 }}
+                      className="space-y-4"
+                    >
+                      <h4 className="font-medium text-gray-800">是否同意AI给出的匹配度评分？</h4>
+                      <div className="grid grid-cols-2 gap-3">
                         <Button 
                           variant={agreeScoreAnswer === true ? "default" : "outline"}
                           onClick={() => setAgreeScoreAnswer(true)}
-                          className="flex-1"
+                          className={`relative overflow-hidden group h-12 ${
+                            agreeScoreAnswer === true ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' : ''
+                          }`}
                         >
-                          是
+                          <span className="relative z-10">是</span>
+                          {agreeScoreAnswer === true && (
+                            <motion.div
+                              className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3 }}
+                            />
+                          )}
                         </Button>
                         <Button 
                           variant={agreeScoreAnswer === false ? "default" : "outline"}
                           onClick={() => setAgreeScoreAnswer(false)}
-                          className="flex-1"
+                          className={`relative overflow-hidden group h-12 ${
+                            agreeScoreAnswer === false ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' : ''
+                          }`}
                         >
-                          否
+                          <span className="relative z-10">否</span>
+                          {agreeScoreAnswer === false && (
+                            <motion.div
+                              className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3 }}
+                            />
+                          )}
                         </Button>
                       </div>
-                    </div>
-                    <div className="pt-4 border-t">
+                    </motion.div>
+
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 1.2 }}
+                      className="pt-4 border-t border-gray-100"
+                    >
                       <Button
                         onClick={handleConfirm}
                         disabled={!canProceed}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                        className={`w-full relative overflow-hidden group h-12 ${
+                          canProceed 
+                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' 
+                            : 'bg-gray-100 text-gray-400'
+                        }`}
                       >
-                        确定
+                        <span className="relative z-10">确定</span>
+                        {canProceed && (
+                          <motion.div
+                            className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ duration: 0.3 }}
+                          />
+                        )}
                       </Button>
+                    </motion.div>
                     </div>
                   </div>
+              </motion.div>
+            </motion.div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
+
+        <AnimatePresence>
+          {showFeedback && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className={`fixed inset-0 flex items-center justify-center ${
+                isCorrect ? 'bg-green-500/20' : 'bg-red-500/20'
+              }`}
+            >
+              <motion.div
+                initial={{ y: -50 }}
+                animate={{ y: 0 }}
+                className={`text-4xl font-bold ${
+                  isCorrect ? 'text-green-600' : 'text-red-600'
+                }`}
+              >
+                {isCorrect ? '✓ 回答正确???' : '✗ 回答错误???'}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
 
   if (gameState === 'survey') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden relative">
         <GameNav />
-        <div className="h-[calc(100vh-4rem)] overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="max-w-2xl mx-auto">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">
-                你认为候选人在求职中可以使用AI吗？
+        {/* Background Effects */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-50/50 to-purple-50/50"></div>
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100 rounded-full filter blur-3xl opacity-20 animate-pulse"></div>
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-300"></div>
+        </div>
+
+        <div className="relative h-[calc(100vh-4rem)] overflow-y-auto">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-center mb-8"
+            >
+              <h2 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-4">
+                问卷调查
               </h2>
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <div className="space-y-6">
-                  <div className="flex justify-between">
-                    {[1, 2, 3, 4, 5].map((rating) => (
-                      <Button
-                        key={rating}
-                        variant={selectedRating === rating ? "default" : "outline"}
-                        onClick={() => setSelectedRating(rating)}
-                        className="w-20"
-                      >
-                        {rating}
-                      </Button>
+              <p className="text-xl text-gray-600">
+                分享你对AI在招聘中应用的看法
+              </p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-8 space-y-8 border border-gray-100/50"
+            >
+              {/* Question 1 */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className="space-y-4"
+              >
+                <h3 className="text-2xl font-bold text-gray-900">1. 你认为候选人在求职中可以使用AI吗？</h3>
+                <div className="space-y-3">
+                  {[
+                    '可以接受，只要确保提供的信息真实可靠',
+                    '可以接受，这是求职者掌握和运用现代科技能力的一部分',
+                    '可以接受，但应有所限制，过度依赖AI可能会掩盖候选人的真实技能和创造力。',
+                    '不接受，因为可能导致信息失真或不公平竞争',
+                    '不接受，这可能会削弱求职过程中应有的个人努力和真实性',
+                    '不确定/需要进一步观察'
+                  ].map((option) => (
+                    <label
+                      key={option}
+                      className={`flex items-center p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:scale-[1.02] ${
+                        surveyAnswers.aiUsageOpinion === option
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 hover:border-blue-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="aiUsageOpinion"
+                        value={option}
+                        checked={surveyAnswers.aiUsageOpinion === option}
+                        onChange={(e) => setSurveyAnswers(prev => ({
+                          ...prev,
+                          aiUsageOpinion: e.target.value
+                        }))}
+                        className="w-5 h-5 text-blue-600 border-gray-300 focus:ring-blue-500"
+                      />
+                      <span className="ml-4 text-lg text-gray-700">{option}</span>
+                    </label>
                     ))}
                   </div>
-                  <div className="flex justify-between text-sm text-gray-500">
-                    <span>强烈反对</span>
-                    <span>反对</span>
-                    <span>中立</span>
-                    <span>支持</span>
-                    <span>强烈支持</span>
+              </motion.div>
+
+              {/* Question 2 */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.4 }}
+                className="space-y-4 pt-8 border-t border-gray-100"
+              >
+                <h3 className="text-2xl font-bold text-gray-900">2. 企业内部推动人工智能在人力资源管理中的应用应该：</h3>
+                <div className="space-y-3">
+                  {[
+                    '由 IT 部门主导',
+                    '由 HR部门主导',
+                    '由公司高层管理（C-Suite）主导'
+                  ].map((option) => (
+                    <label
+                      key={option}
+                      className={`flex items-center p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:scale-[1.02] ${
+                        surveyAnswers.aiLeadership === option
+                          ? 'border-purple-500 bg-purple-50'
+                          : 'border-gray-200 hover:border-purple-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="aiLeadership"
+                        value={option}
+                        checked={surveyAnswers.aiLeadership === option}
+                        onChange={(e) => setSurveyAnswers(prev => ({
+                          ...prev,
+                          aiLeadership: e.target.value
+                        }))}
+                        className="w-5 h-5 text-purple-600 border-gray-300 focus:ring-purple-500"
+                      />
+                      <span className="ml-4 text-lg text-gray-700">{option}</span>
+                    </label>
+                  ))}
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">我的看法</label>
+              </motion.div>
+
+              {/* Question 3 */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.5 }}
+                className="space-y-4 pt-8 border-t border-gray-100"
+              >
+                <h3 className="text-2xl font-bold text-gray-900">3. 在贵公司的招聘工作中，您认为人工智能在以下哪些方面的影响最大？（可多选，最多选3项）</h3>
+                <div className="space-y-3">
+                  {[
+                    '简历筛选与评估',
+                    '安排面试',
+                    '知识库查询',
+                    '自动生成JD',
+                    '自动生成招聘沟通内容（如邮件、模板、申请表格等）',
+                    '会议纪要/面试记录',
+                    '其他'
+                  ].map((option) => (
+                    <label
+                      key={option}
+                      className={`flex items-center p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:scale-[1.02] ${
+                        surveyAnswers.aiImpactAreas.includes(option)
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-indigo-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={surveyAnswers.aiImpactAreas.includes(option)}
+                        onChange={(e) => {
+                          const newAreas = e.target.checked
+                            ? [...surveyAnswers.aiImpactAreas, option].slice(0, 3)
+                            : surveyAnswers.aiImpactAreas.filter(area => area !== option);
+                          setSurveyAnswers(prev => ({
+                            ...prev,
+                            aiImpactAreas: newAreas
+                          }));
+                        }}
+                        disabled={!surveyAnswers.aiImpactAreas.includes(option) && 
+                                surveyAnswers.aiImpactAreas.length >= 3}
+                        className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                      />
+                      <span className="ml-4 text-lg text-gray-700">{option}</span>
+                    </label>
+                  ))}
+                  {surveyAnswers.aiImpactAreas.includes('其他') && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="mt-4"
+                    >
                     <Input
-                      value={userOpinion}
-                      onChange={(e) => setUserOpinion(e.target.value)}
-                      placeholder="请输入你的看法..."
-                    />
+                        placeholder="请详细说明"
+                        value={surveyAnswers.otherImpactArea}
+                        onChange={(e) => setSurveyAnswers(prev => ({
+                          ...prev,
+                          otherImpactArea: e.target.value
+                        }))}
+                        className="w-full p-4 text-lg border-2 border-indigo-200 focus:border-indigo-500 rounded-lg"
+                      />
+                    </motion.div>
+                  )}
                   </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.6 }}
+                className="pt-8 border-t border-gray-100"
+              >
                   <Button
                     onClick={handleSurveySubmit}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full h-14 text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-200"
                   >
                     提交
                   </Button>
+              </motion.div>
+            </motion.div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
     );
   }
 
-  if (gameState === 'result') {
+  if (gameState === 'result' && showResults) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden relative">
         <GameNav />
-        <div className="h-[calc(100vh-4rem)] overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="text-center mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-4">
-                你认为候选人在求职中可以使用AI吗？
-              </h1>
-            </div>
-            <div className="relative">
-              {renderPieChart()}
-            </div>
-            <div className="text-center mt-8">
-              <Button
-                size="lg"
-                onClick={() => setGameState('idle')}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+        {/* Background Effects */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-50/50 to-purple-50/50"></div>
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100 rounded-full filter blur-3xl opacity-20 animate-pulse"></div>
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-300"></div>
+          <div className="absolute top-1/3 right-1/3 w-96 h-96 bg-pink-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-700"></div>
+          </div>
+
+        <div className="relative h-[calc(100vh-4rem)] overflow-y-auto">
+          <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="grid grid-cols-3 gap-8">
+              {/* Question 1 Chart */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 border border-gray-100/50 transform hover:scale-[1.02] transition-transform duration-300"
               >
-                重新开始
+                <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-4">
+                  你认为候选人在求职中可以使用AI吗？
+                </h2>
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart margin={{ top: 20, right: 120, bottom: 20, left: 40 }}>
+                      <Pie
+                        data={surveyData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        outerRadius={120}
+                        fill="#8884d8"
+                        dataKey="value"
+                        label={({ name, percent, value }) => 
+                          value > 0 ? `${name} ${(percent * 100).toFixed(0)}%` : ''
+                        }
+                      >
+                        {surveyData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend 
+                        layout="vertical" 
+                        verticalAlign="bottom" 
+                        align="right"
+                        wrapperStyle={{ 
+                          paddingLeft: '20px',
+                          fontSize: '14px',
+                          lineHeight: '1.5'
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </motion.div>
+
+              {/* Question 2 Chart */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 border border-gray-100/50 transform hover:scale-[1.02] transition-transform duration-300"
+              >
+                <h2 className="text-xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-4">
+                  谁应该主导AI应用？
+                </h2>
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={leadershipData}
+                      margin={{ top: 20, right: 30, bottom: 100, left: 20 }}
+                    >
+                      <XAxis 
+                        dataKey="name" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={120}
+                        interval={0}
+                        tick={{ fontSize: 14 }}
+                      />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#8884d8" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </motion.div>
+
+              {/* Question 3 Chart */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 border border-gray-100/50 transform hover:scale-[1.02] transition-transform duration-300"
+              >
+                <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-blue-600 bg-clip-text text-transparent mb-4">
+                  AI在招聘中的影响最大的领域？
+                </h2>
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadarChart 
+                      data={impactData}
+                      margin={{ top: 20, right: 100, bottom: 20, left: 100 }}
+                    >
+                      <PolarGrid />
+                      <PolarAngleAxis 
+                        dataKey="name" 
+                        tick={{ fontSize: 12 }}
+                      />
+                      <PolarRadiusAxis 
+                        angle={30} 
+                        domain={[0, Math.max(...impactData.map(d => d.value)) * 1.2]} 
+                      />
+                      <Radar
+                        name="影响程度"
+                        dataKey="value"
+                        stroke="#8884d8"
+                        fill="#8884d8"
+                        fillOpacity={0.6}
+                      />
+                      <Tooltip />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              </motion.div>
+            </div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+              className="mt-8 text-center"
+            >
+              <div className="inline-block bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-6 border border-gray-100/50">
+                <div className="text-2xl font-bold text-gray-800 mb-2">
+                  倒计时: {countdown} 秒
+                </div>
+                <p className="text-gray-600">
+                  页面将在倒计时结束后自动返回
+                </p>
+              </div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.6 }}
+              className="mt-8 text-center"
+            >
+              <Button
+                onClick={() => setGameState('idle')}
+                className="relative overflow-hidden group bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-lg px-8 py-6 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
+              >
+                <span className="relative z-10">立即返回</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
               </Button>
+            </motion.div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'result' && !showResults) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white overflow-hidden relative">
+        <GameNav />
+        {/* Background Effects */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-50/50 to-purple-50/50"></div>
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100 rounded-full filter blur-3xl opacity-20 animate-pulse"></div>
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-300"></div>
+          <div className="absolute top-1/3 right-1/3 w-96 h-96 bg-pink-100 rounded-full filter blur-3xl opacity-20 animate-pulse delay-700"></div>
+        </div>
+
+        <div className="relative h-[calc(100vh-4rem)] overflow-y-auto">
+          <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-center mb-12"
+            >
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-6">
+                竞猜游戏
+              </h1>
+              <p className="text-2xl text-gray-600">
+                猜猜其他HR最支持哪个观点？
+              </p>
+            </motion.div>
+
+            <div className="grid grid-cols-2 gap-8">
+              {/* Left Column - Guessing Form */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-8 space-y-8 border border-gray-100/50 transform hover:scale-[1.02] transition-transform duration-300"
+              >
+                {/* Question 1 */}
+                <motion.div
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="space-y-4"
+                >
+                  <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                    <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                      1. 你认为候选人在求职中可以使用AI吗？
+                    </span>
+                  </h2>
+                  <div className="relative group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg filter blur-xl opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
+                    <select
+                      value={guesses.opinion}
+                      onChange={(e) => setGuesses(prev => ({ ...prev, opinion: e.target.value }))}
+                      className="relative w-full p-4 text-lg border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 appearance-none bg-white/90 backdrop-blur-sm"
+                    >
+                      <option value="">请选择...</option>
+                      {surveyData.map((item) => (
+                        <option key={item.name} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+            </div>
+            </div>
+                  {showAllGuessResults && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`p-4 rounded-lg ${
+                        guessResults.opinion 
+                          ? 'bg-green-50 border border-green-200' 
+                          : 'bg-red-50 border border-red-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {guessResults.opinion ? (
+                          <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                        <span className={`text-lg font-medium ${
+                          guessResults.opinion ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {guessResults.opinion ? '猜对了！' : '猜错了！'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-gray-600">
+                        最受欢迎的观点是：{surveyData.reduce((prev, current) => 
+                          (prev.value > current.value) ? prev : current
+                        ).name}
+                      </p>
+                    </motion.div>
+                  )}
+                </motion.div>
+
+                {/* Question 2 */}
+                <motion.div
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="space-y-4 pt-8 border-t border-gray-100"
+                >
+                  <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                    <span className="bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                      2. 谁应该主导AI应用？
+                    </span>
+                  </h2>
+                  <div className="relative group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg filter blur-xl opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
+                    <select
+                      value={guesses.leadership}
+                      onChange={(e) => setGuesses(prev => ({ ...prev, leadership: e.target.value }))}
+                      className="relative w-full p-4 text-lg border-2 border-gray-200 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200 appearance-none bg-white/90 backdrop-blur-sm"
+                    >
+                      <option value="">请选择...</option>
+                      {leadershipData.map((item) => (
+                        <option key={item.name} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                  {showAllGuessResults && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`p-4 rounded-lg ${
+                        guessResults.leadership 
+                          ? 'bg-green-50 border border-green-200' 
+                          : 'bg-red-50 border border-red-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {guessResults.leadership ? (
+                          <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                        <span className={`text-lg font-medium ${
+                          guessResults.leadership ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {guessResults.leadership ? '猜对了！' : '猜错了！'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-gray-600">
+                        最受欢迎的选择是：{leadershipData.reduce((prev, current) => 
+                          (prev.value > current.value) ? prev : current
+                        ).name}
+                      </p>
+                    </motion.div>
+                  )}
+                </motion.div>
+
+                {/* Question 3 */}
+                <motion.div
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="space-y-4 pt-8 border-t border-gray-100"
+                >
+                  <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                    <span className="bg-gradient-to-r from-indigo-600 to-blue-600 bg-clip-text text-transparent">
+                      3. AI在招聘中的影响最大的领域？
+                    </span>
+                  </h2>
+                  <div className="relative group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-blue-600 rounded-lg filter blur-xl opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
+                    <select
+                      value={guesses.impact}
+                      onChange={(e) => setGuesses(prev => ({ ...prev, impact: e.target.value }))}
+                      className="relative w-full p-4 text-lg border-2 border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all duration-200 appearance-none bg-white/90 backdrop-blur-sm"
+                    >
+                      <option value="">请选择...</option>
+                      {impactData.map((item) => (
+                        <option key={item.name} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                  {showAllGuessResults && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`p-4 rounded-lg ${
+                        guessResults.impact 
+                          ? 'bg-green-50 border border-green-200' 
+                          : 'bg-red-50 border border-red-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {guessResults.impact ? (
+                          <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                        <span className={`text-lg font-medium ${
+                          guessResults.impact ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {guessResults.impact ? '猜对了！' : '猜错了！'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-gray-600">
+                        最受欢迎的选择是：{impactData.reduce((prev, current) => 
+                          (prev.value > current.value) ? prev : current
+                        ).name}
+                      </p>
+                    </motion.div>
+                  )}
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.6 }}
+                  className="pt-8 border-t border-gray-100"
+                >
+              <Button
+                    onClick={handleGuess}
+                    disabled={!guesses.opinion || !guesses.leadership || !guesses.impact || showAllGuessResults}
+                    className={`relative w-full h-14 text-lg font-semibold rounded-lg shadow-lg transform transition-all duration-200 overflow-hidden group ${
+                      !guesses.opinion || !guesses.leadership || !guesses.impact || showAllGuessResults
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white hover:shadow-xl hover:scale-[1.02]'
+                    }`}
+                  >
+                    <span className="relative z-10">提交所有猜测</span>
+                    {(!guesses.opinion || !guesses.leadership || !guesses.impact || showAllGuessResults) ? null : (
+                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
+                    )}
+              </Button>
+                </motion.div>
+              </motion.div>
+
+              {/* Right Column - Preview */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className="bg-white/80 backdrop-blur-md rounded-xl shadow-xl p-8 border border-gray-100/50 transform hover:scale-[1.02] transition-transform duration-300"
+              >
+                <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-6">
+                  你的选择
+                </h2>
+                <div className="space-y-6">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
+                    className="p-6 rounded-xl bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-100/50"
+                  >
+                    <div className="text-lg font-semibold text-gray-800 mb-2">AI使用态度</div>
+                    <div className="text-xl text-gray-600">
+                      {guesses.opinion || '尚未选择'}
+            </div>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 }}
+                    className="p-6 rounded-xl bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100/50"
+                  >
+                    <div className="text-lg font-semibold text-gray-800 mb-2">主导部门</div>
+                    <div className="text-xl text-gray-600">
+                      {guesses.leadership || '尚未选择'}
+          </div>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                    className="p-6 rounded-xl bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100/50"
+                  >
+                    <div className="text-lg font-semibold text-gray-800 mb-2">影响领域</div>
+                    <div className="text-xl text-gray-600">
+                      {guesses.impact || '尚未选择'}
+                    </div>
+                  </motion.div>
+                </div>
+              </motion.div>
             </div>
           </div>
         </div>
@@ -886,5 +1928,49 @@ export default function TrueFalseCVPage() {
     );
   }
 
-  return null;
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
+      {gameState === 'playing' && (
+        <div className="max-w-4xl mx-auto p-6">
+          <div className="mt-8 flex justify-center gap-4">
+            <button
+              onClick={() => handleAnswer(true)}
+              className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              是
+            </button>
+            <button
+              onClick={() => handleAnswer(false)}
+              className="px-8 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              否
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showFeedback && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                className={`fixed inset-0 flex items-center justify-center ${
+                  isCorrect ? 'bg-green-500/20' : 'bg-red-500/20'
+                }`}
+              >
+                <motion.div
+                  initial={{ y: -50 }}
+                  animate={{ y: 0 }}
+                  className={`text-4xl font-bold ${
+                    isCorrect ? 'text-green-600' : 'text-red-600'
+                  }`}
+                >
+                  {isCorrect ? '✓ 回答正确???' : '✗ 回答错误???'}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  );
 }

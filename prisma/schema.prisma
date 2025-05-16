@@ -33,10 +33,20 @@ model Match {
 }
 
 model SurveyAnswer {
-    id            String   @id @default(cuid())
-    createdAt     DateTime @default(now())
-    rating        Int // 1-5 rating
-    opinion       String? // Optional text opinion
+    id        String   @id @default(cuid())
+    createdAt DateTime @default(now())
+
+    // Question 1: AI usage in job applications
+    aiUsageOpinion String // Stores the selected option
+
+    // Question 2: AI implementation leadership
+    aiLeadership String // Stores the selected department
+
+    // Question 3: AI impact areas (stored as JSON array)
+    aiImpactAreas   String // JSON array of selected areas
+    otherImpactArea String? // Optional text for "Other" option
+
+    // Original fields
     participantId String // External participant ID
 
     @@index([participantId])
