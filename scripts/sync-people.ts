@@ -39,25 +39,100 @@ const AVATURE_BASE_URL = 'https://voutiquefteng.avature.net/rest/upfront';
 
 const SYNC_INTERVAL = 1; // 5 minutes in milliseconds
 
+// Add helper function to process avatar data
+function processAvatarData(avatarData: string | { id: number; file_name: string; file_size_kb: number; contents: string; } | null): string | null {
+  if (!avatarData) return null;
+  
+  // If it's already a string (URL or data URL), return it
+  if (typeof avatarData === 'string') {
+    if (avatarData.startsWith('data:')) {
+      return avatarData;
+    }
+    if (avatarData.match(/^[A-Za-z0-9+/=]+$/)) {
+      return `data:image/jpeg;base64,${avatarData}`;
+    }
+    return avatarData;
+  }
+  
+  // If it's an Avature file object
+  if (typeof avatarData === 'object' && avatarData.contents) {
+    // If contents is already a data URL
+    if (avatarData.contents.startsWith('data:')) {
+      return avatarData.contents;
+    }
+    // If contents is a base64 string
+    if (avatarData.contents.startsWith('/9j/')) {
+      return `data:image/jpeg;base64,${avatarData.contents}`;
+    }
+    // If contents is a relative path
+    if (avatarData.contents.startsWith('/')) {
+      return avatarData.contents;
+    }
+  }
+  
+  return null;
+}
+
+// Add helper function to safely parse JSON with base64 data
+function safeJSONParse(jsonString: string): any {
+  try {
+    // First try normal parsing
+    return JSON.parse(jsonString);
+  } catch (error) {
+    // If normal parsing fails, try to handle base64 data
+    try {
+      // Replace any unescaped quotes in base64 data
+      const sanitized = jsonString.replace(/"contents":"([^"]*)"/g, (match, p1) => {
+        return `"contents":"${p1.replace(/"/g, '\\"')}"`;
+      });
+      return JSON.parse(sanitized);
+    } catch (innerError) {
+      console.error('Failed to parse JSON:', innerError);
+      throw innerError;
+    }
+  }
+}
+
 async function syncPeople() {
   try {
     console.log('Starting people sync...');
     
-    // Fetch all people IDs from Avature
-    const response = await fetchWithRetry(`${AVATURE_BASE_URL}/people`, {
-      headers: {
-        'accept': 'application/json',
-        'X-Avature-REST-API-Key': AVATURE_API_KEY!,
-      },
-    });
+    let pageNumber = 1;
+    const pageSize = 50; // Maximum allowed page size
+    let allPeopleIds: string[] = [];
+    
+    // Fetch all people IDs from Avature with pagination
+    while (true) {
+      console.log(`Fetching page ${pageNumber}...`);
+      
+      const response = await fetchWithRetry(
+        `${AVATURE_BASE_URL}/people?page_number=${pageNumber}&page_size=${pageSize}`,
+        {
+          headers: {
+            'accept': 'application/json',
+            'X-Avature-REST-API-Key': AVATURE_API_KEY!,
+          },
+        }
+      );
 
-    const data = await response.json();
-    const peopleIds = data.items.map((item: any) => item.id);
+      const data = await response.json();
+      const pagePeopleIds = data.items.map((item: any) => item.id);
+      
+      if (pagePeopleIds.length === 0) {
+        console.log('No more people to fetch');
+        break;
+      }
+      
+      allPeopleIds = [...allPeopleIds, ...pagePeopleIds];
+      console.log(`Fetched ${pagePeopleIds.length} people from page ${pageNumber}`);
+      
+      pageNumber++;
+    }
 
-    console.log(`Found ${peopleIds.length} people to sync`);
+    console.log(`Found total of ${allPeopleIds.length} people to sync`);
 
     // Process each person
-    for (const id of peopleIds) {
+    for (const id of allPeopleIds) {
       try {
         // Check if person already exists in our database
         const { data: existingPerson } = await supabase
@@ -79,7 +154,7 @@ async function syncPeople() {
           },
         });
 
-        const detailData = await detailResponse.json();
+        const detailData = await safeJSONParse(await detailResponse.text());
         const formData = detailData.items[0];
 
         // Create person in our database with default values for missing data
@@ -99,7 +174,7 @@ async function syncPeople() {
             hrConcern: formData["您现在在HR领域最关心的一个问题是？"] || "未提供",
             weekendActivity: formData["你和朋友一起度过周末时，通常会："] || "未提供",
             socialPreference: formData["你更喜欢哪种社交场合？"] || "未提供",
-            avatarRequest: formData["想知道您匹配度最高的新朋友是谁吗？与我们分享您的头像，方便TA找到你"] || null,
+            avatarRequest: processAvatarData(formData['想知道您匹配度最高的“新朋友”是谁吗？与我们分享您的头像，方便TA找到你']),
             createdAt: new Date(),
             updatedAt: new Date(),
           });
