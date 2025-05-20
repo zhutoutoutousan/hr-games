@@ -1298,29 +1298,6 @@ export function SocialMatchingInterface() {
                 </p>
               </div>
             </div>
-            
-            <div className="mt-8 flex flex-col gap-4">
-              <Button
-                variant="outline"
-                size="lg"
-                className="w-full"
-                onClick={onClose}
-              >
-                返回首页
-              </Button>
-              <Button
-                className="w-full bg-[#0065f0] hover:bg-[#0065f0]/90"
-                onClick={() => {
-                  toast({
-                    title: "联系会议人员",
-                    description: "请前往会议服务台，工作人员将协助您与匹配对象建立联系",
-                    duration: 5000,
-                  });
-                }}
-              >
-                联系会议人员
-              </Button>
-            </div>
           </div>
         </motion.div>
       </div>
