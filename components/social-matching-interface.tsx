@@ -35,7 +35,12 @@ interface Person {
   hobbies: string;
   hrConcern: string;
   socialPreference: string;
-  avatarRequest: string;
+  avatarRequest: string | {
+    id: number;
+    file_name: string;
+    file_size_kb: number;
+    contents: string;
+  };
 }
 
 interface Match {
@@ -134,6 +139,112 @@ interface SupabaseMatch {
   };
 }
 
+// Helper function to get random cat image
+const getRandomCatImage = () => {
+  const randomId = Math.floor(Math.random() * 1000);
+  return `https://cataas.com/cat?${randomId}`;
+};
+
+// Helper function to get avatar URL
+const getAvatarUrl = async (personId: number): Promise<string> => {
+  try {
+    // First try to fetch from Supabase
+    const { data: person, error } = await supabase
+      .from('People')
+      .select('avatarRequest')
+      .eq('id', personId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching avatar:', error);
+      return getRandomCatImage();
+    }
+
+    if (!person || !person.avatarRequest) {
+      return getRandomCatImage();
+    }
+
+    // Handle different types of avatarRequest
+    if (typeof person.avatarRequest === 'string') {
+      return person.avatarRequest;
+    }
+
+    if ('contents' in person.avatarRequest && person.avatarRequest.contents) {
+      return `data:image/jpeg;base64,${person.avatarRequest.contents}`;
+    }
+
+    return getRandomCatImage();
+  } catch (error) {
+    console.error('Error in getAvatarUrl:', error);
+    return getRandomCatImage();
+  }
+};
+
+// Update the Avatar component usage to handle async avatar loading
+const AvatarWithFallback = ({ person }: { person: Person }) => {
+  const [avatarUrl, setAvatarUrl] = useState<string>('');
+
+  useEffect(() => {
+    const loadAvatar = async () => {
+      const url = await getAvatarUrl(person.id);
+      setAvatarUrl(url);
+    };
+    loadAvatar();
+  }, [person.id]);
+
+  return (
+    <Avatar className="h-12 w-12">
+      <AvatarImage src={avatarUrl} alt={person.name} />
+      <AvatarFallback>{person.name[0]}</AvatarFallback>
+    </Avatar>
+  );
+};
+
+// Update the card image to use async loading
+const CardImage = ({ person }: { person: Person }) => {
+  const [imageUrl, setImageUrl] = useState<string>(getRandomCatImage());
+
+  useEffect(() => {
+    const loadImage = async () => {
+      try {
+        const url = await getAvatarUrl(person.id);
+        setImageUrl(url);
+      } catch (error) {
+        console.error('Error loading image:', error);
+      }
+    };
+    loadImage();
+  }, [person.id]);
+
+  return (
+    <img 
+      src={imageUrl}
+      alt={person.name}
+      className="w-full h-full object-cover"
+    />
+  );
+};
+
+// Add helper function to safely parse JSON with base64 data
+function safeJSONParse(jsonString: string): any {
+  try {
+    // First try normal parsing
+    return JSON.parse(jsonString);
+  } catch (error) {
+    // If normal parsing fails, try to handle base64 data
+    try {
+      // Replace any unescaped quotes in base64 data
+      const sanitized = jsonString.replace(/"contents":"([^"]*)"/g, (match, p1) => {
+        return `"contents":"${p1.replace(/"/g, '\\"')}"`;
+      });
+      return JSON.parse(sanitized);
+    } catch (innerError) {
+      console.error('Failed to parse JSON:', innerError);
+      throw innerError;
+    }
+  }
+}
+
 export function SocialMatchingInterface() {
   const [stage, setStage] = useState<GameStage>('email');
   const [email, setEmail] = useState('');
@@ -162,6 +273,7 @@ export function SocialMatchingInterface() {
   const [matchingSteps, setMatchingSteps] = useState<MatchingStep[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentAnalysisStep, setCurrentAnalysisStep] = useState(0);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [direction, setDirection] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -171,6 +283,7 @@ export function SocialMatchingInterface() {
   // Add new state for match success
   const [showMatchSuccess, setShowMatchSuccess] = useState(false);
   const [successfulMatch, setSuccessfulMatch] = useState<Match | null>(null);
+  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
 
   // Add search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -324,9 +437,18 @@ export function SocialMatchingInterface() {
 
             for (const line of lines) {
               if (line.startsWith('data: ')) {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'person') {
-                  newPeople.push(data.data);
+                try {
+                  // First try to parse the data without the SSE prefix
+                  const jsonStr = line.slice(6);
+                  // Remove any potential base64 data that might cause parsing issues
+                  const sanitizedJson = jsonStr.replace(/"avatarRequest":"[^"]*"/g, '"avatarRequest":""');
+                  const data = JSON.parse(sanitizedJson);
+                  if (data.type === 'person') {
+                    newPeople.push(data.data);
+                  }
+                } catch (error) {
+                  console.error('Error parsing person data:', error);
+                  continue;
                 }
               }
             }
@@ -374,11 +496,6 @@ export function SocialMatchingInterface() {
     }
   };
 
-  const getRandomCatImage = () => {
-    const randomId = Math.floor(Math.random() * 1000);
-    return `https://cataas.com/cat?${randomId}`;
-  };
-
   const handleEmailVerification = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsVerifying(true);
@@ -406,26 +523,32 @@ export function SocialMatchingInterface() {
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'person') {
-                allPeople.push(data.data);
-                // Check if the email matches
-                if (data.data.email === email) {
-                  emailFound = true;
-                  // Set user profile immediately when found
-                  setUserProfile({
-                    id: data.data.id,
-                    name: data.data.name,
-                    email: data.data.email,
-                    gender: data.data.gender,
-                    industry: data.data.industry,
-                    position: data.data.position,
-                    hobbies: data.data.hobbies,
-                    hrConcern: data.data.hrConcern,
-                    socialPreference: data.data.socialPreference,
-                    avatarRequest: data.data.avatarRequest
-                  });
+              try {
+                console.log(line.slice(6));
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'person') {
+                  allPeople.push(data.data);
+                  // Check if the email matches
+                  if (data.data.email === email) {
+                    emailFound = true;
+                    // Set user profile immediately when found
+                    setUserProfile({
+                      id: data.data.id,
+                      name: data.data.name,
+                      email: data.data.email,
+                      gender: data.data.gender,
+                      industry: data.data.industry,
+                      position: data.data.position,
+                      hobbies: data.data.hobbies,
+                      hrConcern: data.data.hrConcern,
+                      socialPreference: data.data.socialPreference,
+                      avatarRequest: data.data.avatarRequest
+                    });
+                  }
                 }
+              } catch (error) {
+                console.error('Error parsing person data:', error);
+                continue;
               }
             }
           }
@@ -528,7 +651,10 @@ export function SocialMatchingInterface() {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const data = JSON.parse(line.slice(6));
+                const jsonStr = line.slice(6);
+                // Remove any potential base64 data that might cause parsing issues
+                const sanitizedJson = jsonStr.replace(/"avatarRequest":"[^"]*"/g, '"avatarRequest":""');
+                const data = JSON.parse(sanitizedJson);
                 if (data.type === 'match') {
                   if (data.data.person.name !== currentUser.name && newMatches.length < 5) {
                     const existingIndex = newMatches.findIndex(m => m.person.id === data.data.person.id);
@@ -681,7 +807,10 @@ export function SocialMatchingInterface() {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const data = JSON.parse(line.slice(6));
+                const jsonStr = line.slice(6);
+                // Remove any potential base64 data that might cause parsing issues
+                const sanitizedJson = jsonStr.replace(/"avatarRequest":"[^"]*"/g, '"avatarRequest":""');
+                const data = JSON.parse(sanitizedJson);
                 if (data.type === 'match') {
                   if (data.data.person.name !== userProfile.name && newMatches.length < 5) {
                     const existingIndex = newMatches.findIndex(m => m.person.id === data.data.person.id);
@@ -776,7 +905,7 @@ export function SocialMatchingInterface() {
     if (Math.abs(offset) > threshold) {
       if (offset > 0) {
         // Get the current match from the matches array
-        const currentMatch = matches[currentCardIndex];
+        const currentMatch = matches[currentCardIndex - 1];
         if (!currentMatch) return;
 
         // Get current user's ID from people array
@@ -837,14 +966,27 @@ export function SocialMatchingInterface() {
               throw insertError;
             }
 
-            // Show match success view
+            // Show match success view with current match
             setSuccessfulMatch(currentMatch);
             setShowMatchSuccess(true);
+            
+            // Add the match to myMatches
+            setMyMatches(prev => [...prev, currentMatch]);
           } else {
             toast({
               title: "已经匹配过",
               description: `您已经和 ${currentMatch.person.name} 匹配过了`,
             });
+            
+            // Move to next card immediately if already matched
+            if (currentCardIndex < matches.length - 1) {
+              setCurrentCardIndex(currentCardIndex + 1);
+            } else {
+              toast({
+                title: "匹配完成",
+                description: "您已经浏览完所有匹配结果！",
+              });
+            }
           }
         } catch (error) {
           console.error('Error updating match:', error);
@@ -854,17 +996,16 @@ export function SocialMatchingInterface() {
             variant: "destructive"
           });
         }
-      }
-      
-      // Move to next card
-      if (currentCardIndex < matches.length - 1) {
-        setCurrentCardIndex(currentCardIndex + 1);
       } else {
-        // No more cards
-        toast({
-          title: "匹配完成",
-          description: "您已经浏览完所有匹配结果！",
-        });
+        // Swiped left (skip) - Just move to next card
+        if (currentCardIndex < matches.length - 1) {
+          setCurrentCardIndex(currentCardIndex + 1);
+        } else {
+          toast({
+            title: "匹配完成",
+            description: "您已经浏览完所有匹配结果！",
+          });
+        }
       }
     }
     
@@ -918,28 +1059,12 @@ export function SocialMatchingInterface() {
     setStage('matching');
   };
 
-  // Add this useEffect near the other useEffect hooks
-  useEffect(() => {
-    if (stage === 'result' && matches[currentCardIndex]?.reasoning_steps?.length > 0) {
-      const totalSteps = matches[currentCardIndex].reasoning_steps.length;
-      let currentIndex = 0;
-      
-      // Set initial step
-      setCurrentStep(currentIndex);
-      
-      const interval = setInterval(() => {
-        currentIndex = (currentIndex + 1) % totalSteps;
-        setCurrentStep(currentIndex);
-      }, 3000); // Change step every 3 seconds
-
-      return () => clearInterval(interval);
-    }
-  }, [stage, matches, currentCardIndex]);
 
   // Add this useEffect to reset currentStep when card changes
   useEffect(() => {
     setCurrentStep(0);
   }, [currentCardIndex]);
+
 
   if (stage === 'email') {
     return (
@@ -1005,10 +1130,7 @@ export function SocialMatchingInterface() {
                     {myMatches.map((match) => (
                       <Card key={match.id} className="p-4 hover:shadow-md transition-shadow">
                         <div className="flex items-center gap-4">
-                          <Avatar className="h-16 w-16">
-                            <AvatarImage src={match.person.avatarRequest} />
-                            <AvatarFallback>{match.person.name[0]}</AvatarFallback>
-                          </Avatar>
+                          <AvatarWithFallback person={match.person} />
                           <div className="flex-1">
                             <h3 className="text-lg font-semibold">{match.person.name}</h3>
                             <p className="text-gray-600">{match.person.position} @ {match.person.industry}</p>
@@ -1077,10 +1199,7 @@ export function SocialMatchingInterface() {
                         className="bg-gray-800/50 rounded-lg p-4"
                       >
                         <div className="flex items-start gap-4">
-                          <Avatar className="h-12 w-12">
-                            <AvatarImage src={person.avatarRequest} />
-                            <AvatarFallback>{person.name[0]}</AvatarFallback>
-                          </Avatar>
+                          <AvatarWithFallback person={person} />
                           <div className="flex-1">
                             <h3 className="text-lg font-semibold text-white">{person.name}</h3>
                             <p className="text-sm text-gray-400">{person.position} @ {person.industry}</p>
@@ -1117,10 +1236,7 @@ export function SocialMatchingInterface() {
                       className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4"
                     >
                       <div className="flex items-start gap-4">
-                        <Avatar className="h-12 w-12">
-                          <AvatarImage src={person.avatarRequest} />
-                          <AvatarFallback>{person.name[0]}</AvatarFallback>
-                        </Avatar>
+                        <AvatarWithFallback person={person} />
                         <div className="flex-1">
                           <h3 className="text-lg font-semibold text-white">{person.name}</h3>
                           <p className="text-sm text-gray-300">{person.position} @ {person.industry}</p>
@@ -1182,10 +1298,7 @@ export function SocialMatchingInterface() {
                           className="bg-gray-800/50 rounded-lg p-4"
                         >
                           <div className="flex items-center gap-4">
-                            <Avatar className="h-12 w-12">
-                              <AvatarImage src={match.person.avatarRequest} />
-                              <AvatarFallback>{match.person.name[0]}</AvatarFallback>
-                            </Avatar>
+                            <AvatarWithFallback person={match.person} />
                             <div className="flex-1">
                               <h3 className="text-lg font-semibold text-white">{match.person.name}</h3>
                               <p className="text-sm text-gray-400">{match.person.position} @ {match.person.industry}</p>
@@ -1263,21 +1376,18 @@ export function SocialMatchingInterface() {
           className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden"
         >
           <div className="relative">
-            <div className="h-48 bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
-              <div className="text-center text-white">
-                <h2 className="text-4xl font-bold mb-2">匹配成功！</h2>
-                <p className="text-xl">你们有 {match.match_score}% 的匹配度</p>
+            <div className="h-48">
+              <CardImage person={match.person} />
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-500/80 to-purple-500/80 flex items-center justify-center">
+                <div className="text-center text-white">
+                  <h2 className="text-4xl font-bold mb-2">匹配成功！</h2>
+                  <p className="text-xl">你们有 {match.match_score}% 的匹配度</p>
+                </div>
               </div>
-            </div>
-            <div className="absolute -bottom-16 left-1/2 transform -translate-x-1/2">
-              <Avatar className="h-32 w-32 border-4 border-white shadow-lg">
-                <AvatarImage src={match.person.avatarRequest} />
-                <AvatarFallback>{match.person.name[0]}</AvatarFallback>
-              </Avatar>
             </div>
           </div>
           
-          <div className="pt-20 pb-6 px-6">
+          <div className="p-6">
             <div className="text-center mb-6">
               <h3 className="text-2xl font-bold">{match.person.name}</h3>
               <p className="text-gray-600">{match.person.position} @ {match.person.industry}</p>
@@ -1303,6 +1413,85 @@ export function SocialMatchingInterface() {
       </div>
     );
 
+    // Add AI Analysis Modal component
+    const AIAnalysisModal = ({ match, onClose }: { match: Match; onClose: () => void }) => (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      >
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.9, opacity: 0 }}
+          className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        >
+          {/* Header */}
+          <div className="relative">
+            <div className="h-32 bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+              <div className="text-center text-white">
+                <h2 className="text-2xl font-bold mb-1">AI详细分析</h2>
+                <p className="text-lg">匹配度: {match.match_score}%</p>
+              </div>
+            </div>
+            <div className="absolute -bottom-12 left-1/2 transform -translate-x-1/2">
+              <AvatarWithFallback person={match.person} />
+            </div>
+          </div>
+          
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto pt-16 pb-4 px-4">
+            <div className="text-center mb-4">
+              <h3 className="text-xl font-bold">{match.person.name}</h3>
+              <p className="text-gray-600 text-sm">{match.person.position} @ {match.person.industry}</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <h4 className="font-semibold text-gray-700 mb-3">AI分析步骤</h4>
+                <div className="space-y-3">
+                  {match.reasoning_steps.map((step, index) => (
+                    <div key={index} className="flex items-start gap-3 bg-gray-50 p-3 rounded-lg">
+                      <div className="w-6 h-6 rounded-full bg-[#0065f0] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
+                        {index + 1}
+                      </div>
+                      <p className="text-gray-700 text-sm">{step}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <h4 className="font-semibold text-gray-700 mb-1">兴趣爱好</h4>
+                <p className="text-gray-600 text-sm">{match.person.hobbies}</p>
+              </div>
+              
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <h4 className="font-semibold text-gray-700 mb-1">基本信息</h4>
+                <p className="text-gray-600 text-sm">
+                  行业: {match.person.industry}
+                  <br />
+                  职位: {match.person.position}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t">
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="w-full"
+            >
+              关闭
+            </Button>
+          </div>
+        </motion.div>
+      </motion.div>
+    );
+
     return (
       <div className="min-h-screen bg-gray-50 p-4 md:p-8">
         <div className="max-w-4xl mx-auto">
@@ -1310,13 +1499,19 @@ export function SocialMatchingInterface() {
           
           <div className="relative h-[600px] md:h-[800px]">
             <AnimatePresence>
-              {showMatchSuccess && successfulMatch && (
+              {showMatchSuccess && currentMatch && (
                 <MatchSuccessView
-                  match={successfulMatch}
+                  match={currentMatch}
                   onClose={() => {
                     setShowMatchSuccess(false);
-                    setSuccessfulMatch(null);
                   }}
+                />
+              )}
+              
+              {showAIAnalysis && (
+                <AIAnalysisModal
+                  match={currentMatch}
+                  onClose={() => setShowAIAnalysis(false)}
                 />
               )}
               
@@ -1342,12 +1537,9 @@ export function SocialMatchingInterface() {
               >
                 <Card className="bg-white shadow-lg">
                   <div className="relative h-[300px] md:h-[500px]">
-                    <Avatar className="absolute inset-0 w-full h-full rounded-none">
-                      <AvatarImage src={currentMatch.person.avatarRequest || getRandomCatImage()} />
-                      <AvatarFallback>
-                        {currentMatch.person.name ? currentMatch.person.name[0] : '?'}
-                      </AvatarFallback>
-                    </Avatar>
+                    <div className="absolute inset-0">
+                      <CardImage person={currentMatch.person} />
+                    </div>
                     <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
                       <h2 className="text-3xl font-bold text-white">
                         {currentMatch.person.name || '未知用户'}
@@ -1386,43 +1578,13 @@ export function SocialMatchingInterface() {
                       <div>
                         <h3 className="font-semibold text-gray-700 mb-2 text-lg">AI分析</h3>
                         <div className="bg-gray-50 p-6 rounded-lg">
-                          {currentMatch.reasoning_steps && currentMatch.reasoning_steps.length > 0 ? (
-                            <div className="h-[120px] relative">
-                              <AnimatePresence mode="wait">
-                                {currentMatch.reasoning_steps[currentStep] && (
-                                  <motion.div
-                                    key={currentStep}
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -20 }}
-                                    transition={{
-                                      duration: 0.5
-                                    }}
-                                    className="absolute inset-0 flex items-start gap-3"
-                                  >
-                                    <motion.div
-                                      initial={{ scale: 0 }}
-                                      animate={{ scale: 1 }}
-                                      transition={{ duration: 0.3 }}
-                                      className="w-8 h-8 rounded-full bg-[#0065f0] text-white flex items-center justify-center text-lg font-bold"
-                                    >
-                                      {currentStep + 1}
-                                    </motion.div>
-                                    <motion.p
-                                      initial={{ opacity: 0, x: -20 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ duration: 0.5 }}
-                                      className="text-gray-700 text-lg"
-                                    >
-                                      {currentMatch.reasoning_steps[currentStep]}
-                                    </motion.p>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          ) : (
-                            <p className="text-gray-700 text-lg">{currentMatch.reasoning}</p>
-                          )}
+                          <Button
+                            variant="outline"
+                            className="w-full h-12 text-lg"
+                            onClick={() => setShowAIAnalysis(true)}
+                          >
+                            查看详细分析
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -1440,31 +1602,6 @@ export function SocialMatchingInterface() {
                 </p>
               </div>
             </div>
-            
-            {/* Action Buttons */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-2 md:gap-4">
-              <Button
-                variant="outline"
-                size="lg"
-                className="w-32 md:w-40 h-10 md:h-12 text-sm md:text-lg"
-                onClick={() => setStage('matching')}
-              >
-                重新匹配
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setStage('email')}
-              >
-                返回首页
-              </Button>
-              <Button 
-                size="lg"
-                className="w-32 md:w-40 h-10 md:h-12 text-sm md:text-lg bg-[#0065f0] hover:bg-[#0065f0]/90"
-                onClick={handleRefresh}
-              >
-                刷新结果
-              </Button>
-            </div>
           </div>
         </div>
       </div>
@@ -1476,10 +1613,7 @@ export function SocialMatchingInterface() {
       <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-b from-blue-50 to-white">
         <Card className="w-full max-w-md overflow-hidden">
           <div className="relative h-64 bg-gray-100">
-            <Avatar className="absolute inset-0 w-full h-full">
-              <AvatarImage src={matches[currentIndex].person.avatarRequest} alt={matches[currentIndex].person.name} />
-              <AvatarFallback>{matches[currentIndex].person.name?.[0] || '?'}</AvatarFallback>
-            </Avatar>
+            <AvatarWithFallback person={matches[currentIndex].person} />
           </div>
           <div className="p-6">
             <h2 className="text-2xl font-bold">{matches[currentIndex].person.name}</h2>
@@ -1522,10 +1656,7 @@ export function SocialMatchingInterface() {
     <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-b from-blue-50 to-white">
       <Card className="w-full max-w-md overflow-hidden">
         <div className="relative h-64 bg-gray-100">
-          <Avatar className="absolute inset-0 w-full h-full">
-            <AvatarImage src={matches[currentIndex].person.avatarRequest} alt={matches[currentIndex].person.name} />
-            <AvatarFallback>{matches[currentIndex].person.name?.[0] || '?'}</AvatarFallback>
-          </Avatar>
+          <AvatarWithFallback person={matches[currentIndex].person} />
         </div>
         <div className="p-6">
           <h2 className="text-2xl font-bold">{matches[currentIndex].person.name}</h2>

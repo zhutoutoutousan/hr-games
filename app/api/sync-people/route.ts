@@ -10,21 +10,65 @@ const supabase = createClient(
 const AVATURE_API_KEY = process.env.AVATURE_API_KEY!;
 const AVATURE_BASE_URL = 'https://voutiquefteng.avature.net/rest/upfront';
 
+// Add helper function to safely parse JSON with base64 data
+function safeJSONParse(jsonString: string): any {
+  try {
+    // First try normal parsing
+    return JSON.parse(jsonString);
+  } catch (error) {
+    // If normal parsing fails, try to handle base64 data
+    try {
+      // Replace any unescaped quotes in base64 data
+      const sanitized = jsonString.replace(/"contents":"([^"]*)"/g, (match, p1) => {
+        return `"contents":"${p1.replace(/"/g, '\\"')}"`;
+      });
+      return JSON.parse(sanitized);
+    } catch (innerError) {
+      console.error('Failed to parse JSON:', innerError);
+      throw innerError;
+    }
+  }
+}
+
 export async function GET() {
   try {
-    // Fetch all people IDs from Avature
-    const response = await fetchWithRetry(`${AVATURE_BASE_URL}/people`, {
-      headers: {
-        'accept': 'application/json',
-        'X-Avature-REST-API-Key': AVATURE_API_KEY,
-      },
-    });
+    let pageNumber = 1;
+    const pageSize = 50; // Maximum allowed page size
+    let allPeopleIds: string[] = [];
+    let totalSynced = 0;
+    
+    // Fetch all people IDs from Avature with pagination
+    while (true) {
+      console.log(`Fetching page ${pageNumber}...`);
+      
+      const response = await fetchWithRetry(
+        `${AVATURE_BASE_URL}/people?page_number=${pageNumber}&page_size=${pageSize}`,
+        {
+          headers: {
+            'accept': 'application/json',
+            'X-Avature-REST-API-Key': AVATURE_API_KEY,
+          },
+        }
+      );
 
-    const data = await response.json();
-    const peopleIds = data.items.map((item: any) => item.id);
+      const data = await response.json();
+      const pagePeopleIds = data.items.map((item: any) => item.id);
+      
+      if (pagePeopleIds.length === 0) {
+        console.log('No more people to fetch');
+        break;
+      }
+      
+      allPeopleIds = [...allPeopleIds, ...pagePeopleIds];
+      console.log(`Fetched ${pagePeopleIds.length} people from page ${pageNumber}`);
+      
+      pageNumber++;
+    }
+
+    console.log(`Found total of ${allPeopleIds.length} people to sync`);
 
     // Process each person
-    for (const id of peopleIds) {
+    for (const id of allPeopleIds) {
       try {
         // Check if person already exists in our database
         const { data: existingPerson } = await supabase
@@ -46,7 +90,7 @@ export async function GET() {
           },
         });
 
-        const detailData = await detailResponse.json();
+        const detailData = await safeJSONParse(await detailResponse.text());
         const formData = detailData.items[0];
 
         // Create person in our database with default values for missing data
@@ -66,7 +110,7 @@ export async function GET() {
             hrConcern: formData["您现在在HR领域最关心的一个问题是？"] || "未提供",
             weekendActivity: formData["你和朋友一起度过周末时，通常会："] || "未提供",
             socialPreference: formData["你更喜欢哪种社交场合？"] || "未提供",
-            avatarRequest: formData["想知道您匹配度最高的新朋友是谁吗？与我们分享您的头像，方便TA找到你"] || null,
+            avatarRequest: formData['想知道您匹配度最高的"新朋友"是谁吗？与我们分享您的头像，方便TA找到你'] || null,
             createdAt: new Date(),
             updatedAt: new Date(),
           });
@@ -76,6 +120,7 @@ export async function GET() {
           throw error;
         }
 
+        totalSynced++;
         console.log(`Successfully synced person ${id}`);
       } catch (error) {
         console.error(`Failed to sync person ${id}:`, error);
@@ -83,7 +128,15 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({ success: true, message: 'People sync completed' });
+    return NextResponse.json({ 
+      success: true, 
+      message: 'People sync completed',
+      stats: {
+        totalFound: allPeopleIds.length,
+        totalSynced,
+        pagesProcessed: pageNumber
+      }
+    });
   } catch (error) {
     console.error('Failed to sync people:', error);
     return NextResponse.json(

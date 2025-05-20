@@ -8,6 +8,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "dotenv": "^16.3.1",
+    "scripts": "file:",
     "ts-node": "^10.9.1",
     "typescript": "^5.3.2"
   }

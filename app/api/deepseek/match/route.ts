@@ -31,10 +31,9 @@ const MATCHING_SYSTEM_MESSAGE = `You are a professional HR consultant analyzing 
 Your task is to evaluate how well these two people would match based on their professional backgrounds, interests, and preferences.
 Consider factors like:
 1. Professional compatibility (industry, position)
-2. Personal interests alignment (hobbies, food preferences)
-3. Work-life balance preferences (weekend activities)
-4. Social interaction styles
-5. HR concerns and interests
+2. Personal interests alignment (hobbies)
+3. Social interaction styles
+4. HR concerns and interests
 
 For each factor, provide a detailed analysis of how the two profiles align or differ.
 Then provide a final compatibility score and summary.
@@ -82,10 +81,7 @@ export async function POST(request: Request) {
           - Industry: ${userData.industry}
           - Position: ${userData.position}
           - Hobbies: ${userData.hobbies}
-          - Favorite Food: ${userData.favoriteFood}
-          - Least Favorite Food: ${userData.leastFavoriteFood}
           - HR Concern: ${userData.hrConcern}
-          - Weekend Activity: ${userData.weekendActivity}
           - Social Preference: ${userData.socialPreference}
 
           Person 2 (Candidate):
@@ -93,10 +89,7 @@ export async function POST(request: Request) {
           - Industry: ${candidate.industry}
           - Position: ${candidate.position}
           - Hobbies: ${candidate.hobbies}
-          - Favorite Food: ${candidate.favoriteFood}
-          - Least Favorite Food: ${candidate.leastFavoriteFood}
           - HR Concern: ${candidate.hrConcern}
-          - Weekend Activity: ${candidate.weekendActivity}
           - Social Preference: ${candidate.socialPreference}
 
           Please analyze their compatibility step by step and provide a detailed reasoning process.

@@ -46,8 +46,8 @@ export async function GET() {
           leastFavoriteFood: person.leastFavoriteFood,
           hrConcern: person.hrConcern,
           weekendActivity: person.weekendActivity,
-          socialPreference: person.socialPreference,
-          avatarRequest: person.avatarRequest,
+          socialPreference: person.socialPreference
+          // Exclude avatarRequest to prevent JSON parsing issues with large base64 data
         };
 
         await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'person', data: personData })}\n\n`));
