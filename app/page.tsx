@@ -79,7 +79,6 @@ export default function HomePage() {
             </div>
           </button>
         </div>
-        <GameNav />
       </main>
     );
   }

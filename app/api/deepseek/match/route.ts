@@ -18,6 +18,7 @@ interface Person {
 
 interface MatchRequest {
   userData: Person;
+  candidates: Person[];
 }
 
 interface MatchAnalysis {
@@ -42,56 +43,26 @@ Your response must be a valid JSON object with the following structure:
 {
   "score": number (0-100),
   "reasoning": "A summary of the match analysis",
-  "reasoning_steps": ["Step 1 explanation", "Step 2 explanation", ...]
-}`;
+  "reasoning_steps": ["第一步-{步骤名}-{解释}", "第二步-{步骤名}-{解释}", ...]
+}
+Please use Chinese to answer.
+`;
 
 export async function POST(request: Request) {
   try {
-    const { userData } = await request.json() as MatchRequest;
+    const { userData, candidates } = await request.json() as MatchRequest;
 
-    if (!userData) {
+    if (!userData || !candidates) {
       return NextResponse.json(
         { error: 'Missing required data' },
         { status: 400 }
       );
     }
 
-    // Fetch candidates from people API
-    const peopleResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/people`);
-    if (!peopleResponse.ok) {
-      throw new Error('Failed to fetch candidates');
-    }
-
-    const candidates: Person[] = [];
-    const reader = peopleResponse.body?.getReader();
-    const decoder = new TextDecoder();
-
-    if (reader) {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'person') {
-              // Skip the current user from candidates
-              if (data.data.name !== userData.name) {
-                candidates.push(data.data);
-              }
-            }
-          }
-        }
-      }
-    }
-
     if (candidates.length === 0) {
       return NextResponse.json(
-        { error: 'No candidates found' },
-        { status: 404 }
+        { error: 'No candidates provided' },
+        { status: 400 }
       );
     }
 
@@ -129,7 +100,8 @@ export async function POST(request: Request) {
           - Social Preference: ${candidate.socialPreference}
 
           Please analyze their compatibility step by step and provide a detailed reasoning process.
-          Return your analysis in the exact JSON format specified in the system message.`;
+          Return your analysis in the exact JSON format specified in the system message.
+          Please use Chinese to answer.`;
 
           try {
             const response = await generateResponse(prompt, MATCHING_SYSTEM_MESSAGE, false);

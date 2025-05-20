@@ -18,24 +18,6 @@ export function Navbar() {
               </Link>
             </div>
           </div>
-          <div className="flex items-center space-x-4">
-            <Link href="/">
-              <Button 
-                variant={pathname === '/' ? 'default' : 'ghost'}
-                className={pathname === '/' ? 'bg-[#0065f0]' : ''}
-              >
-                首页
-              </Button>
-            </Link>
-            <Link href="/leaderboard">
-              <Button 
-                variant={pathname === '/leaderboard' ? 'default' : 'ghost'}
-                className={pathname === '/leaderboard' ? 'bg-[#0065f0]' : ''}
-              >
-                排行榜
-              </Button>
-            </Link>
-          </div>
         </div>
       </div>
     </nav>
