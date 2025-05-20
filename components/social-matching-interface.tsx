@@ -28,6 +28,7 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then(mod => mod.QRCodeSVG
 interface Person {
   id: number;
   name: string;
+  email: string;
   gender: string;
   industry: string;
   position: string;
@@ -38,7 +39,7 @@ interface Person {
 }
 
 interface Match {
-  id: number;
+  id: string;
   match_score: number;
   person: Person;
   reasoning: string;
@@ -53,6 +54,8 @@ interface MatchingStep {
   reasoning: string;
   reasoning_steps: string[];
 }
+
+type MatchingViewStage = 'all-participants' | 'shuffle' | 'analysis' | 'results' | 'countdown';
 
 // Add loading animation component
 const LoadingAnimation = () => (
@@ -72,6 +75,65 @@ const getRandomPeople = (people: Person[], count: number = 5): Person[] => {
   return shuffled.slice(0, count);
 };
 
+// Add helper functions for rule-based matching
+const findCommonWords = (str1: string, str2: string): string[] => {
+  const words1 = str1.toLowerCase().split(/[\s,，]+/);
+  const words2 = str2.toLowerCase().split(/[\s,，]+/);
+  return words1.filter(word => words2.includes(word));
+};
+
+const calculateRuleBasedScore = (user: Person, candidate: Person): number => {
+  let score = 0;
+  
+  // Check industry overlap
+  const industryOverlap = findCommonWords(user.industry, candidate.industry);
+  if (industryOverlap.length > 0) {
+    score += 30;
+  }
+  
+  // Check position overlap
+  const positionOverlap = findCommonWords(user.position, candidate.position);
+  if (positionOverlap.length > 0) {
+    score += 20;
+  }
+  
+  // Check hobbies overlap
+  const hobbiesOverlap = findCommonWords(user.hobbies, candidate.hobbies);
+  if (hobbiesOverlap.length > 0) {
+    score += 25;
+  }
+  
+  // Check social preference match
+  if (user.socialPreference === candidate.socialPreference) {
+    score += 25;
+  }
+  
+  return score;
+};
+
+// Add type for Supabase match response
+interface SupabaseMatch {
+  id: string;
+  score: number;
+  createdAt: string;
+  updatedAt: string;
+  participantId: string;
+  matchedWithId: string;
+  isActive: boolean;
+  People: {
+    id: number;
+    name: string;
+    email: string;
+    gender: string;
+    industry: string;
+    position: string;
+    hobbies: string;
+    hrConcern: string;
+    socialPreference: string;
+    avatarRequest: string;
+  };
+}
+
 export function SocialMatchingInterface() {
   const [stage, setStage] = useState<GameStage>('email');
   const [email, setEmail] = useState('');
@@ -85,6 +147,7 @@ export function SocialMatchingInterface() {
   const { toast } = useToast();
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [isLoadingPeople, setIsLoadingPeople] = useState(false);
+  const [hasLoadedPeople, setHasLoadedPeople] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -120,10 +183,125 @@ export function SocialMatchingInterface() {
     person.hobbies.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Add new state for email error
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  // Add new state for matching view stage
+  const [matchingViewStage, setMatchingViewStage] = useState<MatchingViewStage>('all-participants');
+  const [selectedPeople, setSelectedPeople] = useState<Person[]>([]);
+  const [countdown, setCountdown] = useState(3);
+
+  // Add useEffect to load matches when profile view is active
+  useEffect(() => {
+    const loadMatches = async () => {
+      if (stage !== 'profile' || !userProfile) return;
+
+      try {
+        // Load user's matches from the database using ID
+        const { data: matchesAsParticipant, error: matchesAsParticipantError } = await supabase
+          .from('Match')
+          .select(`
+            id,
+            score,
+            createdAt,
+            updatedAt,
+            participantId,
+            matchedWithId,
+            isActive,
+            People!Match_matchedWithId_fkey (
+              id,
+              name,
+              email,
+              gender,
+              industry,
+              position,
+              hobbies,
+              hrConcern,
+              socialPreference,
+              avatarRequest
+            )
+          `)
+          .eq('participantId', userProfile.id)
+          .eq('isActive', true)
+          .returns<SupabaseMatch[]>();
+
+        const { data: matchesAsMatched, error: matchesAsMatchedError } = await supabase
+          .from('Match')
+          .select(`
+            id,
+            score,
+            createdAt,
+            updatedAt,
+            participantId,
+            matchedWithId,
+            isActive,
+            People!Match_participantId_fkey (
+              id,
+              name,
+              email,
+              gender,
+              industry,
+              position,
+              hobbies,
+              hrConcern,
+              socialPreference,
+              avatarRequest
+            )
+          `)
+          .eq('matchedWithId', userProfile.id)
+          .eq('isActive', true)
+          .returns<SupabaseMatch[]>();
+
+        if (matchesAsParticipantError || matchesAsMatchedError) {
+          throw matchesAsParticipantError || matchesAsMatchedError;
+        }
+
+        // Combine both types of matches
+        const matches = [
+          ...(matchesAsParticipant || []).map(match => ({
+            id: match.id,
+            match_score: match.score,
+            person: match.People,
+            reasoning: '基于AI匹配算法',
+            reasoning_steps: ['匹配度分析', '兴趣相似度', '行业背景'],
+            createdAt: match.createdAt,
+            updatedAt: match.updatedAt,
+            participantId: match.participantId,
+            matchedWithId: match.matchedWithId,
+            isActive: match.isActive
+          })),
+          ...(matchesAsMatched || []).map(match => ({
+            id: match.id,
+            match_score: match.score,
+            person: match.People,
+            reasoning: '基于AI匹配算法',
+            reasoning_steps: ['匹配度分析', '兴趣相似度', '行业背景'],
+            createdAt: match.createdAt,
+            updatedAt: match.updatedAt,
+            participantId: match.participantId,
+            matchedWithId: match.matchedWithId,
+            isActive: match.isActive
+          }))
+        ].filter(match => match.person); // Remove any undefined persons
+
+        setMyMatches(matches);
+      } catch (error) {
+        console.error('Error loading matches:', error);
+        toast({
+          title: "加载失败",
+          description: "加载匹配记录失败，请重试",
+          variant: "destructive"
+        });
+      }
+    };
+
+    loadMatches();
+  }, [stage, userProfile]);
+
   // Load people when form stage is active
   useEffect(() => {
     const loadPeople = async () => {
-      if (stage !== 'matching') return;
+      if (stage !== 'matching' || hasLoadedPeople) return;
       
       setIsLoadingPeople(true);
       try {
@@ -156,6 +334,7 @@ export function SocialMatchingInterface() {
         }
 
         setPeople(newPeople);
+        setHasLoadedPeople(true);
       } catch (error) {
         console.error('Error loading people:', error);
         toast({
@@ -169,49 +348,7 @@ export function SocialMatchingInterface() {
     };
 
     loadPeople();
-  }, [stage]);
-
-  const loadPeople = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch('/api/people');
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('Failed to get reader');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      const newPeople: Person[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'person') {
-              newPeople.push(data.data);
-            }
-          }
-        }
-      }
-
-      setPeople(newPeople);
-    } catch (error) {
-      console.error('Error loading people:', error);
-      toast({
-        title: "加载失败",
-        description: "加载匹配结果失败",
-        variant: "destructive"
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [stage, hasLoadedPeople]);
 
   const getDeepSeekMatch = async (userData: typeof formData) => {
     try {
@@ -245,27 +382,10 @@ export function SocialMatchingInterface() {
   const handleEmailVerification = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsVerifying(true);
+    setEmailError(null);
 
     try {
-      // Here you would typically make an API call to verify the email
-      // For now, we'll simulate a successful verification
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // After successful verification, transition to profile view
-      setStage('profile');
-      
-      // Load user profile and matches from the database
-      const { data: matches, error: matchesError } = await supabase
-        .from('Match')
-        .select('*')
-        .eq('participantId', email)
-        .eq('isActive', true);
-
-      if (matchesError) {
-        throw matchesError;
-      }
-
-      // Load all people from the API
+      // Always load people data first
       const response = await fetch('/api/people');
       if (!response.ok) {
         throw new Error('Failed to fetch people');
@@ -274,6 +394,7 @@ export function SocialMatchingInterface() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       const allPeople: Person[] = [];
+      let emailFound = false;
 
       if (reader) {
         while (true) {
@@ -288,59 +409,178 @@ export function SocialMatchingInterface() {
               const data = JSON.parse(line.slice(6));
               if (data.type === 'person') {
                 allPeople.push(data.data);
+                // Check if the email matches
+                if (data.data.email === email) {
+                  emailFound = true;
+                  // Set user profile immediately when found
+                  setUserProfile({
+                    id: data.data.id,
+                    name: data.data.name,
+                    email: data.data.email,
+                    gender: data.data.gender,
+                    industry: data.data.industry,
+                    position: data.data.position,
+                    hobbies: data.data.hobbies,
+                    hrConcern: data.data.hrConcern,
+                    socialPreference: data.data.socialPreference,
+                    avatarRequest: data.data.avatarRequest
+                  });
+                }
               }
             }
           }
         }
       }
 
-      // Create Match objects with the required structure
-      const formattedMatches: Match[] = matches.map(match => {
-        const matchedUser = allPeople.find(user => user.name === match.matchedWithId);
-        return {
-          id: match.id,
-          match_score: match.score,
-          person: {
-            id: matchedUser?.id || 0,
-            name: match.matchedWithId,
-            gender: matchedUser?.gender || '',
-            industry: matchedUser?.industry || '',
-            position: matchedUser?.position || '',
-            hobbies: matchedUser?.hobbies || '',
-            hrConcern: matchedUser?.hrConcern || '',
-            socialPreference: matchedUser?.socialPreference || '',
-            avatarRequest: matchedUser?.avatarRequest || ''
-          },
-          reasoning: '基于AI匹配算法',
-          reasoning_steps: ['匹配度分析', '兴趣相似度', '行业背景']
-        };
+      setPeople(allPeople);
+      setHasLoadedPeople(true);
+
+      if (!emailFound) {
+        setEmailError('邮箱未注册或尚未同步，请稍等');
+        return;
+      }
+
+      // After successful verification, directly go to matching stage
+      setStage('matching');
+      setMatchingViewStage('all-participants');
+      setIsStreaming(true);
+      setStreamedMatches([]);
+      
+      // Get current user's ID
+      const currentUser = allPeople.find(person => person.email === email);
+      if (!currentUser) {
+        throw new Error('User not found');
+      }
+
+      // Get all available people excluding the current user
+      const availablePeople = allPeople.filter(person => 
+        person.email !== email
+      );
+
+      // Calculate rule-based scores for all available people
+      const scoredPeople = availablePeople.map(person => ({
+        person,
+        score: calculateRuleBasedScore(currentUser, person)
+      }));
+
+      // Sort by score and take top matches (up to 5)
+      const ruleBasedMatches = scoredPeople
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map(item => item.person);
+
+      // If we have less than 5 matches, add random unmatched people
+      let finalCandidates = [...ruleBasedMatches];
+      if (finalCandidates.length < 5) {
+        const remainingSlots = 5 - finalCandidates.length;
+        const unmatchedPeople = availablePeople.filter(
+          person => !finalCandidates.some(candidate => candidate.id === person.id)
+        );
+        const randomPeople = getRandomPeople(unmatchedPeople, remainingSlots);
+        finalCandidates = [...finalCandidates, ...randomPeople];
+      }
+
+      setSelectedPeople(finalCandidates);
+      
+      // Create initial matches with placeholder scores
+      const initialMatches = finalCandidates.map(person => ({
+        id: person.id.toString(),
+        match_score: 0,
+        person,
+        reasoning: 'AI分析中...',
+        reasoning_steps: ['正在分析匹配度...']
+      }));
+
+      setMatches(initialMatches);
+      setStreamedMatches(initialMatches);
+      
+      // Start the cinematic sequence
+      setTimeout(() => setMatchingViewStage('shuffle'), 2000);
+      setTimeout(() => setMatchingViewStage('analysis'), 4000);
+      
+      const matchResponse = await fetch('/api/deepseek/match', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userData: currentUser,
+          candidates: finalCandidates
+        }),
       });
 
-      setMyMatches(formattedMatches);
-      
-      // Set user profile from the API data
-      const userProfile = allPeople.find(user => user.name === email);
-      if (userProfile) {
-        setUserProfile({
-          id: userProfile.id,
-          name: userProfile.name,
-          gender: userProfile.gender,
-          industry: userProfile.industry,
-          position: userProfile.position,
-          hobbies: userProfile.hobbies,
-          hrConcern: userProfile.hrConcern,
-          socialPreference: userProfile.socialPreference,
-          avatarRequest: userProfile.avatarRequest
-        });
+      if (!matchResponse.ok) {
+        throw new Error('Failed to get match');
+      }
+
+      const matchReader = matchResponse.body?.getReader();
+      const matchDecoder = new TextDecoder();
+      const newMatches: Match[] = [];
+
+      if (matchReader) {
+        while (true) {
+          const { done, value } = await matchReader.read();
+          if (done) break;
+
+          const chunk = matchDecoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'match') {
+                  if (data.data.person.name !== currentUser.name && newMatches.length < 5) {
+                    const existingIndex = newMatches.findIndex(m => m.person.id === data.data.person.id);
+                    if (existingIndex === -1) {
+                      newMatches.push(data.data);
+                      // Immediately update streamed matches
+                      setStreamedMatches(prev => {
+                        const updated = [...prev];
+                        const index = updated.findIndex(m => m.person.id === data.data.person.id);
+                        if (index !== -1) {
+                          updated[index] = data.data;
+                        }
+                        return updated;
+                      });
+                      // Show results stage as soon as we get the first match
+                      if (newMatches.length === 1) {
+                        setMatchingViewStage('results');
+                      }
+                    }
+                  }
+                } else if (data.type === 'error') {
+                  throw new Error(data.error);
+                }
+              } catch (error) {
+                console.error('Error parsing match data:', error);
+              }
+            }
+          }
+        }
+      }
+
+      if (newMatches.length > 0) {
+        setMatches(newMatches);
+        
+        // Start countdown after all results are shown
+        setTimeout(() => {
+          setMatchingViewStage('countdown');
+          let count = 3;
+          const countdownInterval = setInterval(() => {
+            count--;
+            setCountdown(count);
+            if (count === 0) {
+              clearInterval(countdownInterval);
+              setStage('result');
+            }
+          }, 1000);
+        }, 2000);
       }
 
     } catch (error) {
       console.error('Error in verification process:', error);
-      toast({
-        title: "验证失败",
-        description: "邮箱验证失败，请重试",
-        variant: "destructive"
-      });
+      setEmailError('邮箱验证失败，请重试');
     } finally {
       setIsVerifying(false);
     }
@@ -348,16 +588,68 @@ export function SocialMatchingInterface() {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!userProfile) {
+      toast({
+        title: "匹配失败",
+        description: "用户信息不完整，请重试",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setStage('matching');
-    setMatchingSteps([]);
-    setCurrentStep(0);
-    setIsAnalyzing(true);
+    setMatchingViewStage('all-participants');
     setIsStreaming(true);
     setStreamedMatches([]);
     
     try {
-      // Get random people from the pool
-      const randomPeople = getRandomPeople(people);
+      // First, get all available people excluding the current user
+      const availablePeople = people.filter(person => 
+        person.email !== email && 
+        !myMatches.some(match => match.person.email === person.email)
+      );
+
+      // Calculate rule-based scores for all available people
+      const scoredPeople = availablePeople.map(person => ({
+        person,
+        score: calculateRuleBasedScore(userProfile, person)
+      }));
+
+      // Sort by score and take top matches (up to 5)
+      const ruleBasedMatches = scoredPeople
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map(item => item.person);
+
+      // If we have less than 5 matches, add random unmatched people
+      let finalCandidates = [...ruleBasedMatches];
+      if (finalCandidates.length < 5) {
+        const remainingSlots = 5 - finalCandidates.length;
+        const unmatchedPeople = availablePeople.filter(
+          person => !finalCandidates.some(candidate => candidate.id === person.id)
+        );
+        const randomPeople = getRandomPeople(unmatchedPeople, remainingSlots);
+        finalCandidates = [...finalCandidates, ...randomPeople];
+      }
+
+      setSelectedPeople(finalCandidates);
+      
+      // Create initial matches with placeholder scores
+      const initialMatches = finalCandidates.map(person => ({
+        id: person.id.toString(),
+        match_score: 0,
+        person,
+        reasoning: 'AI分析中...',
+        reasoning_steps: ['正在分析匹配度...']
+      }));
+
+      setMatches(initialMatches);
+      setStreamedMatches(initialMatches);
+      
+      // Start the cinematic sequence
+      setTimeout(() => setMatchingViewStage('shuffle'), 2000);
+      setTimeout(() => setMatchingViewStage('analysis'), 4000);
       
       const response = await fetch('/api/deepseek/match', {
         method: 'POST',
@@ -365,11 +657,8 @@ export function SocialMatchingInterface() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          userData: {
-            ...formData,
-            participantId: formData.name
-          },
-          candidates: randomPeople
+          userData: userProfile,
+          candidates: finalCandidates
         }),
       });
 
@@ -391,25 +680,56 @@ export function SocialMatchingInterface() {
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'match') {
-                if (data.data.person.name !== formData.name && newMatches.length < 5) {
-                  newMatches.push(data.data);
-                  setStreamedMatches(prev => [...prev, data.data]);
-                  if (newMatches.length === 1) {
-                    setIsAnalyzing(false);
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'match') {
+                  if (data.data.person.name !== userProfile.name && newMatches.length < 5) {
+                    const existingIndex = newMatches.findIndex(m => m.person.id === data.data.person.id);
+                    if (existingIndex === -1) {
+                      newMatches.push(data.data);
+                      // Immediately update streamed matches
+                      setStreamedMatches(prev => {
+                        const updated = [...prev];
+                        const index = updated.findIndex(m => m.person.id === data.data.person.id);
+                        if (index !== -1) {
+                          updated[index] = data.data;
+                        }
+                        return updated;
+                      });
+                      // Show results stage as soon as we get the first match
+                      if (newMatches.length === 1) {
+                        setMatchingViewStage('results');
+                      }
+                    }
                   }
+                } else if (data.type === 'error') {
+                  throw new Error(data.error);
                 }
-              } else if (data.type === 'error') {
-                throw new Error(data.error);
+              } catch (error) {
+                console.error('Error parsing match data:', error);
               }
             }
           }
         }
       }
 
-      setMatches(newMatches);
-      setStage('result');
+      if (newMatches.length > 0) {
+        setMatches(newMatches);
+        
+        // Start countdown after all results are shown
+        setTimeout(() => {
+          setMatchingViewStage('countdown');
+          let count = 3;
+          const countdownInterval = setInterval(() => {
+            count--;
+            setCountdown(count);
+            if (count === 0) {
+              clearInterval(countdownInterval);
+              setStage('result');
+            }
+          }, 1000);
+        }, 2000); // Reduced delay to 2 seconds
+      }
     } catch (error) {
       console.error('Error in matching process:', error);
       toast({
@@ -419,7 +739,6 @@ export function SocialMatchingInterface() {
       });
       setStage('profile');
     } finally {
-      setIsAnalyzing(false);
       setIsStreaming(false);
     }
   };
@@ -460,8 +779,19 @@ export function SocialMatchingInterface() {
         const currentMatch = matches[currentCardIndex];
         if (!currentMatch) return;
 
+        // Get current user's ID from people array
+        const currentUser = people.find(person => person.email === email);
+        if (!currentUser) {
+          toast({
+            title: "匹配失败",
+            description: "用户信息不完整，请重试",
+            variant: "destructive"
+          });
+          return;
+        }
+
         // Prevent self-matching
-        if (currentMatch.person.name === email) {
+        if (currentMatch.person.id === currentUser.id) {
           toast({
             title: "无法匹配",
             description: "不能与自己匹配",
@@ -476,8 +806,8 @@ export function SocialMatchingInterface() {
           const { data: existingMatch, error: checkError } = await supabase
             .from('Match')
             .select('id')
-            .eq('participantId', email)
-            .eq('matchedWithId', currentMatch.person.name)
+            .eq('participantId', currentUser.id)
+            .eq('matchedWithId', currentMatch.person.id)
             .maybeSingle();
 
           if (checkError) {
@@ -487,12 +817,14 @@ export function SocialMatchingInterface() {
 
           // If match doesn't exist, create it
           if (!existingMatch) {
+            const matchId = uuidv4(); // Generate a new UUID for the match
             const { error: insertError } = await supabase
               .from('Match')
               .insert([
                 {
-                  participantId: email,
-                  matchedWithId: currentMatch.person.name,
+                  id: matchId,
+                  participantId: currentUser.id,
+                  matchedWithId: currentMatch.person.id,
                   score: currentMatch.match_score,
                   isActive: true,
                   createdAt: new Date().toISOString(),
@@ -548,7 +880,7 @@ export function SocialMatchingInterface() {
   // Update the handleBack function
   const handleBack = () => {
     if (stage === 'matching') {
-      setStage('profile');
+      setStage('email');
     } else if (stage === 'result') {
       setStage('matching');
     } else if (stage === 'matchSuccess') {
@@ -573,18 +905,41 @@ export function SocialMatchingInterface() {
 
   // Update the handleMatchError function
   const handleMatchError = () => {
-    setStage('profile');
+    setStage('email');
   };
 
   // Update the handleMatchCancel function
   const handleMatchCancel = () => {
-    setStage('profile');
+    setStage('email');
   };
 
   // Update the handleMatchRetry function
   const handleMatchRetry = () => {
     setStage('matching');
   };
+
+  // Add this useEffect near the other useEffect hooks
+  useEffect(() => {
+    if (stage === 'result' && matches[currentCardIndex]?.reasoning_steps?.length > 0) {
+      const totalSteps = matches[currentCardIndex].reasoning_steps.length;
+      let currentIndex = 0;
+      
+      // Set initial step
+      setCurrentStep(currentIndex);
+      
+      const interval = setInterval(() => {
+        currentIndex = (currentIndex + 1) % totalSteps;
+        setCurrentStep(currentIndex);
+      }, 3000); // Change step every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [stage, matches, currentCardIndex]);
+
+  // Add this useEffect to reset currentStep when card changes
+  useEffect(() => {
+    setCurrentStep(0);
+  }, [currentCardIndex]);
 
   if (stage === 'email') {
     return (
@@ -599,10 +954,16 @@ export function SocialMatchingInterface() {
                 type="email"
                 placeholder="请输入邮箱"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailError(null);
+                }}
                 className="w-full"
                 required
               />
+              {emailError && (
+                <p className="text-red-500 text-sm mt-2 text-left">{emailError}</p>
+              )}
             </div>
             
             <Button 
@@ -676,14 +1037,7 @@ export function SocialMatchingInterface() {
                 <Button
                   size="lg"
                   className="w-full h-16 text-lg bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
-                  onClick={() => {
-                    setStage('matching');
-                    setMatchingSteps([]);
-                    setCurrentStep(0);
-                    setIsAnalyzing(true);
-                    setIsStreaming(true);
-                    setStreamedMatches([]);
-                  }}
+                  onClick={handleFormSubmit}
                 >
                   开始匹配
                 </Button>
@@ -697,103 +1051,199 @@ export function SocialMatchingInterface() {
 
   if (stage === 'matching') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 p-4 md:p-8">
-        <div className="max-w-6xl mx-auto">
-          {/* Header Section */}
-          <div className="text-center mb-8">
-            <motion.h1 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="text-2xl md:text-4xl font-bold text-white mb-2"
-            >
-              AI 匹配分析中
-            </motion.h1>
-            <motion.p 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.2 }}
-              className="text-gray-400 text-sm md:text-base"
-            >
-              正在寻找最合适的 5 位匹配对象
-            </motion.p>
-          </div>
-
-          {/* Main Content */}
-          <div className="space-y-6">
-            {/* Loading Animation */}
-            {isAnalyzing && streamedMatches.length === 0 && (
-              <motion.div 
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black p-4">
+        <div className="max-w-7xl mx-auto">
+          <AnimatePresence mode="wait">
+            {matchingViewStage === 'all-participants' && (
+              <motion.div
+                key="all-participants"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="flex flex-col items-center justify-center py-12"
+                exit={{ opacity: 0 }}
+                className="space-y-4"
               >
-                <div className="relative w-24 h-24 mb-8">
-                  <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
-                  <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-8 h-8 bg-blue-500 rounded-full animate-pulse"></div>
-                  </div>
+                <div className="text-center mb-6">
+                  <h1 className="text-2xl font-bold text-white mb-2">所有参与者</h1>
+                  <p className="text-gray-400 text-sm">正在筛选最佳匹配...</p>
                 </div>
-                <div className="text-blue-400 text-lg font-medium">AI 正在分析中...</div>
+                <div className="grid grid-cols-1 gap-4">
+                  {people
+                    .filter(person => person.email !== email)
+                    .map((person) => (
+                      <motion.div
+                        key={person.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-gray-800/50 rounded-lg p-4"
+                      >
+                        <div className="flex items-start gap-4">
+                          <Avatar className="h-12 w-12">
+                            <AvatarImage src={person.avatarRequest} />
+                            <AvatarFallback>{person.name[0]}</AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1">
+                            <h3 className="text-lg font-semibold text-white">{person.name}</h3>
+                            <p className="text-sm text-gray-400">{person.position} @ {person.industry}</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                </div>
               </motion.div>
             )}
 
-            {/* Matches Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {streamedMatches.map((match, index) => (
-                <motion.div
-                  key={match.person.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                >
-                  <Card className="bg-gray-800 border-gray-700">
-                    <CardContent className="p-6">
-                      <div className="space-y-4">
-                        <div>
-                          <h3 className="text-xl font-bold text-white">
-                            {match.person.name}
-                          </h3>
-                          <p className="text-gray-400">
-                            {match.person.position} @ {match.person.industry}
-                          </p>
+            {matchingViewStage === 'shuffle' && (
+              <motion.div
+                key="shuffle"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4"
+              >
+                <div className="text-center mb-6">
+                  <h1 className="text-2xl font-bold text-white mb-2">正在筛选</h1>
+                  <p className="text-gray-400 text-sm">寻找最合适的匹配对象...</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4">
+                  {selectedPeople.map((person, index) => (
+                    <motion.div
+                      key={person.id}
+                      initial={{ opacity: 0, x: -100 }}
+                      animate={{ 
+                        opacity: 1, 
+                        x: 0,
+                        transition: { delay: index * 0.2 }
+                      }}
+                      className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4"
+                    >
+                      <div className="flex items-start gap-4">
+                        <Avatar className="h-12 w-12">
+                          <AvatarImage src={person.avatarRequest} />
+                          <AvatarFallback>{person.name[0]}</AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-semibold text-white">{person.name}</h3>
+                          <p className="text-sm text-gray-300">{person.position} @ {person.industry}</p>
                         </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
 
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2 text-gray-300">
-                            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                            <span className="text-sm">{match.person.hobbies}</span>
-                          </div>
-                        </div>
+            {matchingViewStage === 'analysis' && (
+              <motion.div
+                key="analysis"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex flex-col items-center justify-center min-h-[60vh]"
+              >
+                <div className="relative w-24 h-24 mb-8">
+                  <div className="absolute inset-0 border-4 border-blue-200 rounded-full"></div>
+                  <div className="absolute inset-0 border-4 border-blue-600 rounded-full animate-spin border-t-transparent"></div>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-4">AI 分析生成中</h2>
+                <p className="text-gray-400 text-center max-w-md">
+                  正在分析匹配度、兴趣爱好、行业背景等多维度数据...
+                </p>
+              </motion.div>
+            )}
 
-                        {/* Match Analysis */}
-                        {match.reasoning_steps && match.reasoning_steps.length > 0 && (
-                          <div className="mt-4 pt-4 border-t border-gray-700/50">
-                            <div className="space-y-2">
-                              {match.reasoning_steps.map((step, stepIndex) => (
-                                <motion.div
-                                  key={stepIndex}
-                                  initial={{ opacity: 0, x: -20 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: stepIndex * 0.1 }}
-                                  className="flex items-start gap-2"
-                                >
-                                  <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">
-                                    {stepIndex + 1}
-                                  </div>
-                                  <p className="text-sm text-gray-400">{step}</p>
-                                </motion.div>
-                              ))}
+            {matchingViewStage === 'results' && (
+              <motion.div
+                key="results"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="h-screen flex flex-col"
+              >
+                {/* Fixed Header */}
+                <div className="text-center py-6 bg-gradient-to-b from-gray-900 to-transparent">
+                  <h1 className="text-2xl font-bold text-white mb-2">匹配结果</h1>
+                  <p className="text-gray-400 text-sm">为您找到的最佳匹配</p>
+                </div>
+
+                {/* Scrollable Content */}
+                <div className="flex-1 overflow-y-auto px-4 pb-4">
+                  <div className="max-w-7xl mx-auto space-y-4">
+                    {streamedMatches
+                      .sort((a, b) => b.match_score - a.match_score)
+                      .map((match, index) => (
+                        <motion.div
+                          key={match.person.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ 
+                            opacity: 1, 
+                            y: 0,
+                            transition: { delay: index * 0.2 }
+                          }}
+                          className="bg-gray-800/50 rounded-lg p-4"
+                        >
+                          <div className="flex items-center gap-4">
+                            <Avatar className="h-12 w-12">
+                              <AvatarImage src={match.person.avatarRequest} />
+                              <AvatarFallback>{match.person.name[0]}</AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1">
+                              <h3 className="text-lg font-semibold text-white">{match.person.name}</h3>
+                              <p className="text-sm text-gray-400">{match.person.position} @ {match.person.industry}</p>
+                              <p className="text-sm text-gray-400 mt-1">{match.person.hobbies}</p>
+                            </div>
+                            <div className="text-2xl font-bold text-blue-400">
+                              {match.match_score}%
                             </div>
                           </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
+                          {match.reasoning_steps && (
+                            <div className="mt-4 pt-4 border-t border-gray-700">
+                              <div className="space-y-2">
+                                {match.reasoning_steps.map((step, stepIndex) => (
+                                  <motion.div
+                                    key={stepIndex}
+                                    initial={{ opacity: 0, x: -20 }}
+                                    animate={{ 
+                                      opacity: 1, 
+                                      x: 0,
+                                      transition: { delay: index * 0.2 + stepIndex * 0.1 }
+                                    }}
+                                    className="flex items-start gap-2"
+                                  >
+                                    <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm">
+                                      {stepIndex + 1}
+                                    </div>
+                                    <p className="text-sm text-gray-300">{step}</p>
+                                  </motion.div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {matchingViewStage === 'countdown' && (
+              <motion.div
+                key="countdown"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/90 flex items-center justify-center"
+              >
+                <motion.div
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="text-center"
+                >
+                  <div className="text-8xl font-bold text-white mb-4">{countdown}</div>
+                  <p className="text-xl text-gray-400">准备开始滑动匹配</p>
                 </motion.div>
-              ))}
-            </div>
-          </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     );
@@ -847,29 +1297,6 @@ export function SocialMatchingInterface() {
                   职位: {match.person.position}
                 </p>
               </div>
-            </div>
-            
-            <div className="mt-8 flex flex-col gap-4">
-              <Button
-                variant="outline"
-                size="lg"
-                className="w-full"
-                onClick={onClose}
-              >
-                返回首页
-              </Button>
-              <Button
-                className="w-full bg-[#0065f0] hover:bg-[#0065f0]/90"
-                onClick={() => {
-                  toast({
-                    title: "联系会议人员",
-                    description: "请前往会议服务台，工作人员将协助您与匹配对象建立联系",
-                    duration: 5000,
-                  });
-                }}
-              >
-                联系会议人员
-              </Button>
             </div>
           </div>
         </motion.div>
@@ -960,15 +1387,38 @@ export function SocialMatchingInterface() {
                         <h3 className="font-semibold text-gray-700 mb-2 text-lg">AI分析</h3>
                         <div className="bg-gray-50 p-6 rounded-lg">
                           {currentMatch.reasoning_steps && currentMatch.reasoning_steps.length > 0 ? (
-                            <div className="space-y-3">
-                              {currentMatch.reasoning_steps.map((stepText, stepIndex) => (
-                                <div key={stepIndex} className="flex items-start gap-3">
-                                  <div className="w-8 h-8 rounded-full bg-[#0065f0] text-white flex items-center justify-center text-lg font-bold">
-                                    {stepIndex + 1}
-                                  </div>
-                                  <p className="text-gray-700 text-lg">{stepText}</p>
-                                </div>
-                              ))}
+                            <div className="h-[120px] relative">
+                              <AnimatePresence mode="wait">
+                                {currentMatch.reasoning_steps[currentStep] && (
+                                  <motion.div
+                                    key={currentStep}
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -20 }}
+                                    transition={{
+                                      duration: 0.5
+                                    }}
+                                    className="absolute inset-0 flex items-start gap-3"
+                                  >
+                                    <motion.div
+                                      initial={{ scale: 0 }}
+                                      animate={{ scale: 1 }}
+                                      transition={{ duration: 0.3 }}
+                                      className="w-8 h-8 rounded-full bg-[#0065f0] text-white flex items-center justify-center text-lg font-bold"
+                                    >
+                                      {currentStep + 1}
+                                    </motion.div>
+                                    <motion.p
+                                      initial={{ opacity: 0, x: -20 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      transition={{ duration: 0.5 }}
+                                      className="text-gray-700 text-lg"
+                                    >
+                                      {currentMatch.reasoning_steps[currentStep]}
+                                    </motion.p>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
                             </div>
                           ) : (
                             <p className="text-gray-700 text-lg">{currentMatch.reasoning}</p>
@@ -1003,7 +1453,7 @@ export function SocialMatchingInterface() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setStage('profile')}
+                onClick={() => setStage('email')}
               >
                 返回首页
               </Button>

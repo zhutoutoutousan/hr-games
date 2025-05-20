@@ -18,6 +18,32 @@ model Extensions {
     @@map("extensions")
 }
 
+model People {
+    id                String   @id @default(cuid())
+    avatureId         String   @unique // Original Avature ID
+    name              String
+    email             String   @unique
+    gender            String
+    industry          String
+    position          String
+    hobbies           String
+    favoriteFood      String?
+    leastFavoriteFood String?
+    hrConcern         String
+    weekendActivity   String?
+    socialPreference  String
+    avatarRequest     String?
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    // Relations
+    matchesAsParticipant Match[] @relation("ParticipantMatches")
+    matchesAsMatched     Match[] @relation("MatchedWith")
+
+    @@index([email])
+    @@index([avatureId])
+}
+
 model Match {
     id            String   @id @default(cuid())
     score         Float // AI matching score
@@ -26,6 +52,10 @@ model Match {
     participantId String // External participant ID
     matchedWithId String // External participant ID
     isActive      Boolean  @default(true) // Whether this match is still active/visible
+
+    // Relations
+    participant People @relation("ParticipantMatches", fields: [participantId], references: [id])
+    matchedWith People @relation("MatchedWith", fields: [matchedWithId], references: [id])
 
     @@unique([participantId, matchedWithId]) // Prevent duplicate matches
     @@index([participantId])

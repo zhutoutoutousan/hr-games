@@ -55,7 +55,6 @@ export default function MatchingGamePage() {
             </div>
           </CardContent>
         </Card>
-        <GameNav />
       </div>
     );
   }
@@ -63,7 +62,6 @@ export default function MatchingGamePage() {
   return (
     <div className="min-h-screen">
       <SocialMatchingInterface />
-      <GameNav />
     </div>
   );
 } 

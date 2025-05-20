@@ -50,12 +50,12 @@ export async function getSurveyData() {
   });
 
   return [
-    { name: '强烈支持', value: opinionCounts['可以接受，这是求职者掌握和运用现代科技能力的一部分'] },
-    { name: '支持', value: opinionCounts['可以接受，只要确保提供的信息真实可靠'] },
-    { name: '中立', value: opinionCounts['可以接受，但应有所限制，过度依赖AI可能会掩盖候选人的真实技能和创造力。'] },
-    { name: '反对', value: opinionCounts['不接受，因为可能导致信息失真或不公平竞争'] },
-    { name: '强烈反对', value: opinionCounts['不接受，这可能会削弱求职过程中应有的个人努力和真实性'] },
-    { name: '不确定', value: opinionCounts['不确定/需要进一步观察'] }
+    { name: '强烈支持,现代科技能力的体现', value: opinionCounts['可以接受，这是求职者掌握和运用现代科技能力的一部分'] },
+    { name: '支持,真实可靠', value: opinionCounts['可以接受，只要确保提供的信息真实可靠'] },
+    { name: '中立,适度依赖', value: opinionCounts['可以接受，但应有所限制，过度依赖AI可能会掩盖候选人的真实技能和创造力。'] },
+    { name: '反对,信息失真', value: opinionCounts['不接受，因为可能导致信息失真或不公平竞争'] },
+    { name: '强烈反对,个人努力', value: opinionCounts['不接受，这可能会削弱求职过程中应有的个人努力和真实性'] },
+    { name: '不确定,需要观察', value: opinionCounts['不确定/需要进一步观察'] }
   ];
 }
 
