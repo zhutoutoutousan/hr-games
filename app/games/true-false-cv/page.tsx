@@ -75,7 +75,7 @@ export default function TrueFalseCVGame() {
   const [surveyData, setSurveyData] = useState<any[]>([]);
   const [leadershipData, setLeadershipData] = useState<any[]>([]);
   const [impactData, setImpactData] = useState<any[]>([]);
-  const [countdown, setCountdown] = useState(60);
+  const [countdown, setCountdown] = useState(10);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -90,7 +90,7 @@ export default function TrueFalseCVGame() {
           if (prev <= 1) {
             clearInterval(timer);
             setGameState('idle');
-            return 60;
+            return 10;
           }
           return prev - 1;
         });
