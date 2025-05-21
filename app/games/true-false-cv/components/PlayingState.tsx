@@ -396,6 +396,7 @@ export function PlayingState({
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-2xl font-bold text-[rgb(0,101,240)]">你的判断</h2>
               <div className="flex gap-4">
+                <p className="text-lg font-medium mr-4">这份简历是 AI 写的吗？</p>
                 <Button
                   variant={isAIAnswer === true ? 'default' : 'outline'}
                   onClick={() => setIsAIAnswer(true)}
